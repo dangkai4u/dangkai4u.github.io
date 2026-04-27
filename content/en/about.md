@@ -7,7 +7,7 @@ comment: false
 
 ## About Me
 
-Hi, I'm DK.
+Hi, I'm Kai Dang. I'm a researcher at the Qwen Team, focusing on LLMs, RL, and Agents. 
 
 This is my personal blog where I share tech explorations, thoughts, and AI tool experiences.
 
