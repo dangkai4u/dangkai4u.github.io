@@ -77,7 +77,8 @@ pygmentsCodefencesGuessSyntax = true
     enable = false
 
   [params.social]
-    g-github = "https://github.com/dangkai"
+    a-email = "mailto:dangkai.dk@alibaba-inc.com"
+    g-github = "https://github.com/dangkai4u"
 
 [privacy]
   [privacy.googleAnalytics]
