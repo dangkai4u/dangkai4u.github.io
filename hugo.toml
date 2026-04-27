@@ -1,11 +1,11 @@
 baseURL = "https://dangkai4u.github.io/"
-languageCode = "zh-cn"
 defaultContentLanguage = "zh-cn"
 title = "DK's Blog"
 enableRobotsTXT = true
 enableEmoji = true
 theme = "even"
 hasCJKLanguage = true
+
 [pagination]
   pagerSize = 10
 
@@ -15,38 +15,75 @@ pygmentsUseClasses = true
 pygmentsCodefencesGuessSyntax = true
 
 [author]
-  name = "dangkai.dk"
+  name = "dangkai"
 
 [sitemap]
   changefreq = "weekly"
   priority = 0.5
   filename = "sitemap.xml"
 
-[[menu.main]]
-  name = "首页"
-  weight = 10
-  identifier = "home"
-  url = "/"
-[[menu.main]]
-  name = "归档"
-  weight = 20
-  identifier = "archives"
-  url = "/post/"
-[[menu.main]]
-  name = "标签"
-  weight = 30
-  identifier = "tags"
-  url = "/tags/"
-[[menu.main]]
-  name = "分类"
-  weight = 40
-  identifier = "categories"
-  url = "/categories/"
-[[menu.main]]
-  name = "关于"
-  weight = 50
-  identifier = "about"
-  url = "/about/"
+[languages]
+  [languages.zh-cn]
+    languageCode = "zh-cn"
+    languageName = "中文"
+    contentDir = "content/zh-cn"
+    weight = 1
+    [[languages.zh-cn.menu.main]]
+      name = "首页"
+      weight = 10
+      identifier = "home"
+      url = "/"
+    [[languages.zh-cn.menu.main]]
+      name = "归档"
+      weight = 20
+      identifier = "archives"
+      url = "/post/"
+    [[languages.zh-cn.menu.main]]
+      name = "标签"
+      weight = 30
+      identifier = "tags"
+      url = "/tags/"
+    [[languages.zh-cn.menu.main]]
+      name = "分类"
+      weight = 40
+      identifier = "categories"
+      url = "/categories/"
+    [[languages.zh-cn.menu.main]]
+      name = "关于"
+      weight = 50
+      identifier = "about"
+      url = "/about/"
+
+  [languages.en]
+    languageCode = "en"
+    languageName = "EN"
+    contentDir = "content/en"
+    weight = 2
+    [[languages.en.menu.main]]
+      name = "Home"
+      weight = 10
+      identifier = "home"
+      url = "/"
+    [[languages.en.menu.main]]
+      name = "Archives"
+      weight = 20
+      identifier = "archives"
+      url = "/post/"
+    [[languages.en.menu.main]]
+      name = "Tags"
+      weight = 30
+      identifier = "tags"
+      url = "/tags/"
+    [[languages.en.menu.main]]
+      name = "Categories"
+      weight = 40
+      identifier = "categories"
+      url = "/categories/"
+    [[languages.en.menu.main]]
+      name = "About"
+      weight = 50
+      identifier = "about"
+      url = "/about/"
 
 [params]
   version = "4.x"
@@ -57,6 +94,7 @@ pygmentsCodefencesGuessSyntax = true
   description = "技术、感想与 AI 工具分享"
   archivePaginate = 50
   showArchiveCount = true
+  showLanguageSelector = true
   dateFormatToUse = "2006-01-02"
   moreMeta = true
   highlightInClient = false
