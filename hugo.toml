@@ -63,27 +63,27 @@ pygmentsCodefencesGuessSyntax = true
       name = "Home"
       weight = 10
       identifier = "home"
-      url = "/"
+      url = "/en/"
     [[languages.en.menu.main]]
       name = "Archives"
       weight = 20
       identifier = "archives"
-      url = "/post/"
+      url = "/en/post/"
     [[languages.en.menu.main]]
       name = "Tags"
       weight = 30
       identifier = "tags"
-      url = "/tags/"
+      url = "/en/tags/"
     [[languages.en.menu.main]]
       name = "Categories"
       weight = 40
       identifier = "categories"
-      url = "/categories/"
+      url = "/en/categories/"
     [[languages.en.menu.main]]
       name = "About"
       weight = 50
       identifier = "about"
-      url = "/about/"
+      url = "/en/about/"
 
 [params]
   version = "4.x"
