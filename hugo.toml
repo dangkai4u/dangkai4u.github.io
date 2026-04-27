@@ -1,0 +1,92 @@
+baseURL = "https://dangkai4u.github.io/blog/"
+languageCode = "zh-cn"
+defaultContentLanguage = "zh-cn"
+title = "DK's Blog"
+enableRobotsTXT = true
+enableEmoji = true
+theme = "even"
+hasCJKLanguage = true
+[pagination]
+  pagerSize = 10
+
+pygmentsOptions = "linenos=table"
+pygmentsCodefences = true
+pygmentsUseClasses = true
+pygmentsCodefencesGuessSyntax = true
+
+[author]
+  name = "dangkai.dk"
+
+[sitemap]
+  changefreq = "weekly"
+  priority = 0.5
+  filename = "sitemap.xml"
+
+[[menu.main]]
+  name = "首页"
+  weight = 10
+  identifier = "home"
+  url = "/"
+[[menu.main]]
+  name = "归档"
+  weight = 20
+  identifier = "archives"
+  url = "/post/"
+[[menu.main]]
+  name = "标签"
+  weight = 30
+  identifier = "tags"
+  url = "/tags/"
+[[menu.main]]
+  name = "分类"
+  weight = 40
+  identifier = "categories"
+  url = "/categories/"
+[[menu.main]]
+  name = "关于"
+  weight = 50
+  identifier = "about"
+  url = "/about/"
+
+[params]
+  version = "4.x"
+  debug = false
+  since = "2026"
+  logoTitle = "DK's Blog"
+  keywords = ["技术", "AI", "博客"]
+  description = "技术、感想与 AI 工具分享"
+  archivePaginate = 50
+  showArchiveCount = true
+  dateFormatToUse = "2006-01-02"
+  moreMeta = true
+  highlightInClient = false
+  toc = true
+  autoCollapseToc = false
+  fancybox = true
+  postMetaInFooter = true
+  linkToMarkDown = false
+  uglyURLs = false
+
+  [params.publicCDN]
+    enable = false
+
+  [params.busuanzi]
+    enable = false
+
+  [params.reward]
+    enable = false
+
+  [params.social]
+    g-github = "https://github.com/dangkai"
+
+[privacy]
+  [privacy.googleAnalytics]
+    anonymizeIP = true
+  [privacy.youtube]
+    privacyEnhanced = true
+
+[markup]
+  [markup.tableOfContents]
+    startLevel = 1
+  [markup.goldmark.renderer]
+    unsafe = true
