@@ -67,6 +67,9 @@ pygmentsCodefencesGuessSyntax = true
   linkToMarkDown = false
   uglyURLs = false
 
+  [params.author]
+    name = "dangkai"
+
   [params.publicCDN]
     enable = false
 
