@@ -1,0 +1,7 @@
+---
+interface Props {
+  n: number;
+}
+const { n } = Astro.props;
+---
+<a href={`#ref-${n}`}>[{n}]</a>

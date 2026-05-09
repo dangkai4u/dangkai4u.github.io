@@ -12,6 +12,7 @@ mathjax: true
 ---
 
 import Figure from '@/components/Figure.astro'
+import Ref from '@/components/Ref.astro'
 import Sidenote from '@/components/Sidenote.astro'
 
 <p class="lead">In the trillion-parameter era, low-precision computation is no longer a compromise on accuracy — it is a deliberate engineering choice.</p>
@@ -20,9 +21,9 @@ import Sidenote from '@/components/Sidenote.astro'
 
 Scaling laws continue to hold: model sizes have grown from tens of billions to hundreds of billions to trillions of parameters, and the compute and memory costs for training and inference have surged accordingly. Yet GPU memory and compute capacity cannot keep pace with the rate of model growth. Using low precision to store parameters or perform computation has become the industry's inevitable response. From BF16 at 2 bytes to FP8 at 1 byte to FP4 at 0.5 byte, each step down nearly halves both memory footprint and compute cost.
 
-The impact is tangible. DeepSeek-V3's 671B parameters require over 1.3TB of memory in BF16, necessitating at least two-node deployment; switching to FP8 compresses this to roughly 685GB, fitting on a single 8×H200 machine <a href="#ref-1">[1]</a>. GPT-OSS's 120B parameters, with MXFP4-quantized MoE weights, fit entirely on a single 80GB GPU <a href="#ref-3">[3]</a>. And DeepSeek-V4-Pro, at 1.6T parameters with MoE Experts stored in FP4 and other modules in FP8, can run inference on a single 8×B200 node <a href="#ref-2">[2]</a>.
+The impact is tangible. DeepSeek-V3's 671B parameters require over 1.3TB of memory in BF16, necessitating at least two-node deployment; switching to FP8 compresses this to roughly 685GB, fitting on a single 8×H200 machine <Ref n={1} />. GPT-OSS's 120B parameters, with MXFP4-quantized MoE weights, fit entirely on a single 80GB GPU <Ref n={3} />. And DeepSeek-V4-Pro, at 1.6T parameters with MoE Experts stored in FP4 and other modules in FP8, can run inference on a single 8×B200 node <Ref n={2} />.
 
-These are not just inference-time compression tricks. DeepSeek-V3's FP8 runs throughout the entire training process, with loss closely tracking the BF16 baseline <a href="#ref-1">[1]</a>. DeepSeek-V4 embeds FP4 into the training pipeline itself via Quantization-Aware Training, rather than applying quantization post hoc <a href="#ref-2">[2]</a>. Low precision is evolving from an inference optimization into part of the training paradigm.
+These are not just inference-time compression tricks. DeepSeek-V3's FP8 runs throughout the entire training process, with loss closely tracking the BF16 baseline <Ref n={1} />. DeepSeek-V4 embeds FP4 into the training pipeline itself via Quantization-Aware Training, rather than applying quantization post hoc <Ref n={2} />. Low precision is evolving from an inference optimization into part of the training paradigm.
 
 How do we control the quality loss? The following covers three dimensions: numerical formats, scaling, and precision loss mitigation.
 
@@ -43,7 +44,7 @@ A floating-point number consists of three components: sign bit (S), exponent bit
 | FP8 E5M2 | 8 | 1+5+2 | 256 | 57,344 | 1 byte |
 | FP4 E2M1 | 4 | 1+2+1 | 16 | 6 | 0.5 byte |
 
-Early deep learning used FP32 — 4 bytes per parameter, more than enough precision but enormous compute and storage overhead. Mixed Precision Training, proposed in 2018 <a href="#ref-5">[5]</a>, uses FP16 for forward and backward passes to achieve a 2× throughput boost, while maintaining FP32 master weights for parameter updates, balancing speed and accuracy. This quickly became standard practice.
+Early deep learning used FP32 — 4 bytes per parameter, more than enough precision but enormous compute and storage overhead. Mixed Precision Training, proposed in 2018 <Ref n={5} />, uses FP16 for forward and backward passes to achieve a 2× throughput boost, while maintaining FP32 master weights for parameter updates, balancing speed and accuracy. This quickly became standard practice.
 
 However, FP16 revealed clear limitations for large model training. With only 5 exponent bits, FP16's dynamic range caps at 65,504. As models scale up, gradients frequently produce extreme values that exceed this range — overflow triggers loss spikes, underflow zeros out gradients.
 
@@ -57,7 +58,7 @@ Model weights typically cluster around ±0.01 — without scaling, only a handfu
 
 It is worth noting that FP8 has two sub-formats with different roles: **E4M3** (4 exponent + 3 mantissa bits) offers higher precision and is typically used for weight and activation storage in the forward pass; **E5M2** (5 exponent + 2 mantissa bits) provides a wider dynamic range (max 57,344), better suited for gradients whose value range fluctuates more than weights.
 
-Notably, DeepSeek-V3 chose to use E4M3 exclusively, relying on fine-grained scaling to compensate for the reduced dynamic range — a fairly aggressive choice <a href="#ref-1">[1]</a>.
+Notably, DeepSeek-V3 chose to use E4M3 exclusively, relying on fine-grained scaling to compensate for the reduced dynamic range — a fairly aggressive choice <Ref n={1} />.
 
 ### 2.2 FP vs INT: Two Quantization Paths
 
@@ -112,7 +113,7 @@ In terms of granularity, MXFP8 is much finer than block-wise (16,384 elements/gr
 
 On efficiency, the first three approaches store scales in FP32, requiring FP32 floating-point multiplication for dequantization — overhead that grows as scale granularity gets finer. Tile-wise, with one FP32 dequantization per 128 elements, incurs the most overhead. MXFP8, despite having the finest granularity (32 elements/group), uses E8M0 power-of-2 scales where dequantization requires only bit-shift operations — far more efficient than FP32 multiplication. On Blackwell, MXFP8 scale application is handled natively by hardware without additional CUDA Core involvement, making its throughput advantage even more pronounced.
 
-**DeepSeek-V3's approach**: block-wise 128×128 for weights and tile-wise 1×128 for activations, with scales stored in FP32. DeepSeek-V3 was trained on H800 (Hopper architecture), and MXFP8's native hardware acceleration requires Blackwell — on Hopper it can only run via software emulation with limited throughput gains. FP32 scales also offer better precision than E8M0's power-of-2 constraint. The result: FP8 training loss within 0.25% of the BF16 baseline <a href="#ref-1">[1]</a>.
+**DeepSeek-V3's approach**: block-wise 128×128 for weights and tile-wise 1×128 for activations, with scales stored in FP32. DeepSeek-V3 was trained on H800 (Hopper architecture), and MXFP8's native hardware acceleration requires Blackwell — on Hopper it can only run via software emulation with limited throughput gains. FP32 scales also offer better precision than E8M0's power-of-2 constraint. The result: FP8 training loss within 0.25% of the BF16 baseline <Ref n={1} />.
 
 ### 3.3 FP4: Format and Deployment Constraints
 
@@ -129,7 +130,7 @@ FP4 has only 16 values, requiring even finer-grained scaling strategies. Two mai
 | B200 throughput | Baseline | Slightly higher (E8M0 scale is simpler in hardware) |
 | Ecosystem | NVIDIA proprietary | AMD/Intel/Meta/... multi-vendor |
 
-NVFP4 uses smaller blocks (16 vs 32) and two-level scaling for better precision — in GPT-OSS fine-tuning experiments, NVFP4's validation loss was about 2-3% lower than MXFP4 <a href="#ref-4">[4]</a>. However, MXFP4's E8M0 power-of-2 scale only requires bit-shift for dequantization, making it simpler in hardware with slightly better throughput; it also enjoys broader hardware support as an OCP open standard. In practice, the choice depends on precision vs ecosystem priorities. Note the "4.25 bits" figure: FP4 is nominally 4-bit, but with scale storage overhead, each parameter effectively costs 4.25-4.5 bits.
+NVFP4 uses smaller blocks (16 vs 32) and two-level scaling for better precision — in GPT-OSS fine-tuning experiments, NVFP4's validation loss was about 2-3% lower than MXFP4 <Ref n={4} />. However, MXFP4's E8M0 power-of-2 scale only requires bit-shift for dequantization, making it simpler in hardware with slightly better throughput; it also enjoys broader hardware support as an OCP open standard. In practice, the choice depends on precision vs ecosystem priorities. Note the "4.25 bits" figure: FP4 is nominally 4-bit, but with scale storage overhead, each parameter effectively costs 4.25-4.5 bits.
 
 Two practical constraints affect FP4 deployment. First, 4-bit is not byte-aligned: two FP4 values must be packed into a single byte with scales tightly arranged, and reading a single FP4 value requires bit shifting and masking with special scale alignment handling — all adding kernel implementation complexity. Second, native FP4 Tensor Core support is currently limited to NVIDIA's Blackwell architecture (B100/B200); on Hopper and earlier GPUs, FP4 can only run via software emulation without real throughput gains — the primary reason FP4 has not yet seen widespread adoption like FP8.
 
@@ -148,7 +149,7 @@ Low precision is not a free lunch. Naively switching a model from BF16 to FP8 or
 
 Matrix multiplication is the most fundamental compute unit in deep learning. A single Linear layer's matmul may involve thousands of multiply-accumulate operations. The rounding error from a single FP8 multiplication is small, but after thousands of accumulations, the error grows to non-negligible levels.
 
-DeepSeek-V3's approach: Tensor Cores perform FP8 multiplications for throughput, while partial sums are accumulated via CUDA Cores in FP32 precision to preserve correctness <a href="#ref-1">[1]</a> — low-precision multiply, high-precision accumulate.
+DeepSeek-V3's approach: Tensor Cores perform FP8 multiplications for throughput, while partial sums are accumulated via CUDA Cores in FP32 precision to preserve correctness <Ref n={1} /> — low-precision multiply, high-precision accumulate.
 
 ### 4.2 Stochastic Rounding
 
@@ -176,13 +177,13 @@ Not all modules need equal precision. Different Transformer modules vary signifi
 | LayerNorm | High | FP32 | Very few parameters (a few KB); high precision at no extra cost |
 | MoE Experts | Low | FP4/INT4 | 90%+ of total parameters, only a few activated per inference |
 
-**Why is FFN more compression-tolerant than Attention?** FFN's parameter matrices primarily serve as "knowledge storage" — small perturbations to individual parameters are smoothed by subsequent nonlinear functions and LayerNorm. In Attention, $QK^T$ dot products feed directly into Softmax — an exponential function where tiny input perturbations are amplified exponentially. This is why DeepSeek-V4 compresses MoE Experts (essentially FFN) to FP4 while keeping Attention computation at FP8 <a href="#ref-2">[2]</a>.
+**Why is FFN more compression-tolerant than Attention?** FFN's parameter matrices primarily serve as "knowledge storage" — small perturbations to individual parameters are smoothed by subsequent nonlinear functions and LayerNorm. In Attention, $QK^T$ dot products feed directly into Softmax — an exponential function where tiny input perturbations are amplified exponentially. This is why DeepSeek-V4 compresses MoE Experts (essentially FFN) to FP4 while keeping Attention computation at FP8 <Ref n={2} />.
 
 ### 4.4 Quantization-Aware Training
 
 The preceding methods reduce error at the computation level. QAT takes a different approach from the training perspective: letting the model "see" quantized weights during training, proactively adapting to precision degradation.
 
-DeepSeek-V4 applies FP4 (MXFP4) QAT to MoE Expert weights, with a clever core design: **FP4→FP8 dequantization is lossless** <a href="#ref-2">[2]</a>. This holds because neither step introduces rounding:
+DeepSeek-V4 applies FP4 (MXFP4) QAT to MoE Expert weights, with a clever core design: **FP4→FP8 dequantization is lossless** <Ref n={2} />. This holds because neither step introduces rounding:
 
 - **Type conversion is exact**: Every representable value in FP4 E2M1 (2 exponent + 1 mantissa bits) can be exactly represented in FP8 E4M3 (4 exponent + 3 mantissa bits). FP8 strictly contains FP4 in both exponent and mantissa dimensions, so the FP4→FP8 cast requires no rounding.
 - **Scale application is exact**: MXFP4 scales use E8M0 format — pure powers of 2 (e.g., 2⁰, 2¹, 2⁻¹ ...). Multiplying a floating-point number by 2ⁿ only shifts the exponent field without touching the mantissa, producing no rounding error.
