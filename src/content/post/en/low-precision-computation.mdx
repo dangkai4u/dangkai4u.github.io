@@ -44,7 +44,7 @@ A floating-point number consists of three components: sign bit (S), exponent bit
 | FP8 E5M2 | 8 | 1+5+2 | 256 | 57,344 | 1 byte |
 | FP4 E2M1 | 4 | 1+2+1 | 16 | 6 | 0.5 byte |
 
-Early deep learning used FP32 — 4 bytes per parameter, more than enough precision but enormous compute and storage overhead. Mixed Precision Training, proposed in 2018 <Ref n={5} />, uses FP16 for forward and backward passes to achieve a 2× throughput boost, while maintaining FP32 master weights for parameter updates, balancing speed and accuracy. This quickly became standard practice.
+Early deep learning used FP32 — 4 bytes per parameter, more than enough precision but enormous compute and storage overhead. Mixed Precision Training, proposed in 2018 <Ref n={5} /><Ref n={11} />, uses FP16 for forward and backward passes to achieve a 2× throughput boost, while maintaining FP32 master weights for parameter updates, balancing speed and accuracy. This quickly became standard practice.
 
 However, FP16 revealed clear limitations for large model training. With only 5 exponent bits, FP16's dynamic range caps at 65,504. As models scale up, gradients frequently produce extreme values that exceed this range — overflow triggers loss spikes, underflow zeros out gradients.
 
@@ -90,7 +90,7 @@ Scaling maps the original value distribution into the low-precision format's eff
 
 ### 3.2 Scaling Granularities
 
-How much data should a single scale factor cover? Larger coverage means outliers have more destructive impact on overall precision; finer coverage yields higher precision but greater overhead. The industry has evolved several approaches:
+How much data should a single scale factor cover? Larger coverage means outliers have more destructive impact on overall precision; finer coverage yields higher precision but greater overhead. The industry has evolved several approaches <Ref n={12} />:
 
 <Figure src="/svg/scaling-granularity.svg" caption="Scaling granularities compared" width="700px" />
 
@@ -117,7 +117,7 @@ On efficiency, the first three approaches store scales in FP32, requiring FP32 f
 
 ### 3.3 FP4: Format and Deployment Constraints
 
-FP4 has only 16 values, requiring even finer-grained scaling strategies. Two mainstream approaches currently exist: NVIDIA's proprietary NVFP4 and the OCP open standard MXFP4:
+FP4 has only 16 values, requiring even finer-grained scaling strategies. Two mainstream approaches currently exist: NVIDIA's proprietary NVFP4 <Ref n={13} /> and the OCP open standard MXFP4:
 
 <Figure src="/svg/fp4-format-comparison.svg" caption="NVFP4 vs MXFP4 format comparison" width="680px" />
 
@@ -238,3 +238,9 @@ FP8's 256 representable values are far from precise enough on their own — fine
 <span id="ref-9">[9]</span> Frantar et al. "GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers." ICLR 2023. https://arxiv.org/abs/2210.17323
 
 <span id="ref-10">[10]</span> Lin et al. "AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration." MLSys 2024. https://arxiv.org/abs/2306.00978
+
+<span id="ref-11">[11]</span> NVIDIA. "Mixed-Precision Training of Deep Neural Networks." NVIDIA Developer Blog, 2017. https://developer.nvidia.com/blog/mixed-precision-training-deep-neural-networks/
+
+<span id="ref-12">[12]</span> NVIDIA. "Per-Tensor and Per-Block Scaling Strategies for Effective FP8 Training." NVIDIA Developer Blog, 2025. https://developer.nvidia.com/blog/per-tensor-and-per-block-scaling-strategies-for-effective-fp8-training/
+
+<span id="ref-13">[13]</span> NVIDIA. "NVFP4 Trains with Precision of 16-Bit and Speed and Efficiency of 4-Bit." NVIDIA Developer Blog, 2025. https://developer.nvidia.com/blog/nvfp4-trains-with-precision-of-16-bit-and-speed-and-efficiency-of-4-bit/

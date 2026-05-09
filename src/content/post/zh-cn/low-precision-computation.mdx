@@ -44,7 +44,7 @@ Scaling Law 仍在延续，模型参数量从百亿到千亿再到万亿，训�
 | FP8 E5M2 | 8 | 1+5+2 | 256 | 57,344 | 1 byte |
 | FP4 E2M1 | 4 | 1+2+1 | 16 | 6 | 0.5 byte |
 
-早期深度学习训练使用 FP32，每个参数 4 bytes，精度绰绰有余但计算和存储开销巨大。2018 年提出的混合精度训练（Mixed Precision Training）<Ref n={5} />，核心思路是：前向和反向传播用 FP16 计算以获得 2 倍吞吐提升，同时维护一份 FP32 的 master weights 用于参数更新，兼顾速度与精度。这一方案迅速成为标准实践。
+早期深度学习训练使用 FP32，每个参数 4 bytes，精度绰绰有余但计算和存储开销巨大。2018 年提出的混合精度训练（Mixed Precision Training）<Ref n={5} /><Ref n={11} />，核心思路是：前向和反向传播用 FP16 计算以获得 2 倍吞吐提升，同时维护一份 FP32 的 master weights 用于参数更新，兼顾速度与精度。这一方案迅速成为标准实践。
 
 然而 FP16 在大模型训练中暴露出明显的局限性。FP16 只有 5 位指数，动态范围上限为 65,504。当模型规模增大后，梯度中容易出现超出该范围的极端值——上溢直接触发 loss spike，下溢则让梯度归零。
 
@@ -90,7 +90,7 @@ Scaling 的作用是将原始数值分布映射到低精度格式的有效表示
 
 ### 3.2 缩放粒度
 
-但一个 scale factor 应该覆盖多大范围的数据？覆盖范围越大，outlier 对整体精度的影响越大；覆盖范围越小，精度越高但额外开销也随之增加。业界演化出了多种方案：
+但一个 scale factor 应该覆盖多大范围的数据？覆盖范围越大，outlier 对整体精度的影响越大；覆盖范围越小，精度越高但额外开销也随之增加。业界演化出了多种方案 <Ref n={12} />：
 
 <Figure src="/svg/scaling-granularity.svg" caption="缩放粒度对比" width="700px" />
 
@@ -117,7 +117,7 @@ Scaling 的作用是将原始数值分布映射到低精度格式的有效表示
 
 ### 3.3 FP4：格式与部署约束
 
-FP4 只有 16 个值，需要更加细粒度的 scaling 策略。当前有两种主流方案：NVIDIA 专有的 NVFP4 和 OCP 开放标准的 MXFP4：
+FP4 只有 16 个值，需要更加细粒度的 scaling 策略。当前有两种主流方案：NVIDIA 专有的 NVFP4 <Ref n={13} /> 和 OCP 开放标准的 MXFP4：
 
 <Figure src="/svg/fp4-format-comparison.svg" caption="NVFP4 vs MXFP4 格式对比" width="680px" />
 
@@ -238,3 +238,9 @@ FP8 本身的 256 个可表示值远不够精确，细粒度 Scaling、高精度
 <span id="ref-9">[9]</span> Frantar et al. "GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers." ICLR 2023. https://arxiv.org/abs/2210.17323
 
 <span id="ref-10">[10]</span> Lin et al. "AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration." MLSys 2024. https://arxiv.org/abs/2306.00978
+
+<span id="ref-11">[11]</span> NVIDIA. "Mixed-Precision Training of Deep Neural Networks." NVIDIA Developer Blog, 2017. https://developer.nvidia.com/blog/mixed-precision-training-deep-neural-networks/
+
+<span id="ref-12">[12]</span> NVIDIA. "Per-Tensor and Per-Block Scaling Strategies for Effective FP8 Training." NVIDIA Developer Blog, 2025. https://developer.nvidia.com/blog/per-tensor-and-per-block-scaling-strategies-for-effective-fp8-training/
+
+<span id="ref-13">[13]</span> NVIDIA. "NVFP4 Trains with Precision of 16-Bit and Speed and Efficiency of 4-Bit." NVIDIA Developer Blog, 2025. https://developer.nvidia.com/blog/nvfp4-trains-with-precision-of-16-bit-and-speed-and-efficiency-of-4-bit/
