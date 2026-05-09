@@ -44,13 +44,19 @@ A floating-point number consists of three components: sign bit (S), exponent bit
 
 Early deep learning used FP32 — 4 bytes per parameter, more than enough precision but enormous compute and storage overhead. Mixed Precision Training, proposed in 2018 [5], uses FP16 for forward and backward passes to achieve a 2× throughput boost, while maintaining FP32 master weights for parameter updates, balancing speed and accuracy. This quickly became standard practice.
 
-However, FP16 revealed clear limitations for large model training. With only 5 exponent bits, FP16's dynamic range caps at 65,504. As models scale up, gradients frequently produce extreme values that exceed this range — overflow triggers loss spikes, underflow zeros out gradients. **BF16** was designed precisely for this: it retains the same 8-bit exponent as FP32 (dynamic range up to 3.4×10³⁸), at the cost of reducing the mantissa from 23 to 7 bits. For training, dynamic range matters far more than mantissa precision — gradients that neither overflow nor vanish allow training to proceed stably. BF16 thus rapidly replaced FP16 as the default precision for large model training.
+However, FP16 revealed clear limitations for large model training. With only 5 exponent bits, FP16's dynamic range caps at 65,504. As models scale up, gradients frequently produce extreme values that exceed this range — overflow triggers loss spikes, underflow zeros out gradients.
 
-**FP8** compresses further to 8 bits. Taking E4M3 as an example, it has only 256 representable values spread across [-448, 448]. Model weights typically cluster around ±0.01 — without scaling, only a handful of FP8 values fall in this narrow range, and many distinct weights get rounded to the same value. FP8 must be paired with scaling, as we'll detail below.
+**BF16** was designed precisely for this: it retains the same 8-bit exponent as FP32 (dynamic range up to 3.4×10³⁸), at the cost of reducing the mantissa from 23 to 7 bits. For training, dynamic range matters far more than mantissa precision — gradients that neither overflow nor vanish allow training to proceed stably. BF16 thus rapidly replaced FP16 as the default precision for large model training.
+
+**FP8** compresses further to 8 bits. Taking E4M3 as an example, it has only 256 representable values spread across [-448, 448].
+
+Model weights typically cluster around ±0.01 — without scaling, only a handful of FP8 values fall in this narrow range, and many distinct weights get rounded to the same value. FP8 must be paired with scaling, as we'll detail below.
 
 **FP4** is even more extreme: only 16 values total, with the positive representable values being {'{'}0, 0.5, 1, 1.5, 2, 3, 4, 6{'}'}. With such limited representational capacity, multi-level scaling and more sophisticated quantization strategies are essential.
 
-It is worth noting that FP8 has two sub-formats with different roles: **E4M3** (4 exponent + 3 mantissa bits) offers higher precision and is typically used for weight and activation storage in the forward pass; **E5M2** (5 exponent + 2 mantissa bits) provides a wider dynamic range (max 57,344), better suited for gradients whose value range fluctuates more than weights. Notably, DeepSeek-V3 chose to use E4M3 exclusively, relying on fine-grained scaling to compensate for the reduced dynamic range — a fairly aggressive choice [1].
+It is worth noting that FP8 has two sub-formats with different roles: **E4M3** (4 exponent + 3 mantissa bits) offers higher precision and is typically used for weight and activation storage in the forward pass; **E5M2** (5 exponent + 2 mantissa bits) provides a wider dynamic range (max 57,344), better suited for gradients whose value range fluctuates more than weights.
+
+Notably, DeepSeek-V3 chose to use E4M3 exclusively, relying on fine-grained scaling to compensate for the reduced dynamic range — a fairly aggressive choice [1].
 
 ### 2.2 FP vs INT: Two Quantization Paths
 
@@ -118,9 +124,13 @@ FP4 has only 16 values, requiring even finer-grained scaling strategies. Two mai
 | B200 throughput | Baseline | Slightly higher (E8M0 scale is simpler in hardware) |
 | Ecosystem | NVIDIA proprietary | AMD/Intel/Meta/... multi-vendor |
 
-There is an interesting trade-off here: NVFP4 uses smaller blocks (16 vs 32) and two-level scaling for better precision. In GPT-OSS fine-tuning experiments, NVFP4's validation loss was about 2-3% lower than MXFP4 [4]. But MXFP4's E8M0 power-of-2 scale only requires bit-shift for dequantization, making it simpler in hardware with slightly better throughput; it also enjoys broader hardware support as an OCP open standard. In practice, the choice depends on precision vs ecosystem priorities.
+NVFP4 uses smaller blocks (16 vs 32) and two-level scaling for better precision. In GPT-OSS fine-tuning experiments, NVFP4's validation loss was about 2-3% lower than MXFP4 [4].
 
-Also worth noting is the "4.25 bits" figure — FP4 is nominally 4-bit, but with scale storage overhead, each parameter effectively costs 4.25-4.5 bits. Moreover, 4-bit is not byte-aligned, so two FP4 values must be packed into a single byte, with scales also tightly arranged. This adds complexity to kernel implementation and memory access patterns — reading a single FP4 value requires bit shifting and masking, and scale alignment needs special handling.
+But MXFP4's E8M0 power-of-2 scale only requires bit-shift for dequantization, making it simpler in hardware with slightly better throughput; it also enjoys broader hardware support as an OCP open standard. In practice, the choice depends on precision vs ecosystem priorities.
+
+Also worth noting is the "4.25 bits" figure — FP4 is nominally 4-bit, but with scale storage overhead, each parameter effectively costs 4.25-4.5 bits.
+
+Moreover, 4-bit is not byte-aligned, so two FP4 values must be packed into a single byte, with scales also tightly arranged. Reading a single FP4 value requires bit shifting and masking, and scale alignment needs special handling — this adds complexity to kernel implementation.
 
 On the hardware side, native FP4 Tensor Core support is currently limited to NVIDIA's Blackwell architecture (B100/B200). On Hopper and earlier GPUs, FP4 can only be implemented via software emulation, unable to achieve real throughput gains. This is the primary reason FP4 has not yet seen the widespread adoption of FP8.
 
@@ -176,7 +186,9 @@ Not all modules need equal precision. Different Transformer modules vary signifi
 
 The preceding methods reduce error at the computation level. QAT takes a different approach from the training perspective: letting the model "see" quantized weights during training, proactively adapting to precision degradation.
 
-DeepSeek-V4 applies FP4 (MXFP4) QAT to MoE Expert weights, with a clever core design: **FP4→FP8 dequantization is lossless** [2]. FP8 E4M3 has 2 more exponent bits than FP4 E2M1, providing greater dynamic range. As long as the scale factor ratio across FP4 sub-blocks within the same FP8 quantization block stays below a certain threshold, the fine-grained FP4 scale information can be fully absorbed by FP8's larger dynamic range. This means the entire QAT pipeline can directly reuse the existing FP8 training framework with no modifications to the backward pass.
+DeepSeek-V4 applies FP4 (MXFP4) QAT to MoE Expert weights, with a clever core design: **FP4→FP8 dequantization is lossless** [2]. FP8 E4M3 has 2 more exponent bits than FP4 E2M1, providing greater dynamic range. As long as the scale factor ratio across FP4 sub-blocks within the same FP8 quantization block stays below a certain threshold, the fine-grained FP4 scale information can be fully absorbed by FP8's larger dynamic range.
+
+This means the entire QAT pipeline can directly reuse the existing FP8 training framework with no modifications to the backward pass.
 
 The concrete workflow:
 
