@@ -1,0 +1,14 @@
+---
+interface Props {
+  label?: string;
+}
+
+const { label = '*' } = Astro.props;
+---
+
+<span class="sidenote-anchor">
+  <sup class="sidenote-mark">{label}</sup>
+  <span class="sidenote">
+    <slot />
+  </span>
+</span>

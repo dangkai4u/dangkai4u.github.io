@@ -424,7 +424,44 @@ img { max-width: 100%; height: auto; }
   margin-bottom: 12px;
 }
 
+/* ===== Sidenote ===== */
+.sidenote-anchor {
+  position: relative;
+}
+
+.sidenote-mark {
+  color: var(--color-link);
+  cursor: help;
+  font-size: 0.75em;
+  font-weight: 600;
+}
+
+.sidenote {
+  position: absolute;
+  right: calc(-240px - 20px);
+  top: -4px;
+  width: 220px;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--color-text-light);
+  background: var(--color-bg-secondary);
+  border-left: 2px solid var(--color-link);
+  padding: 10px 12px;
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+
 /* ===== Responsive ===== */
+@media (max-width: 1100px) {
+  .sidenote {
+    position: static;
+    display: block;
+    width: 100%;
+    margin: 8px 0;
+    border-left: 2px solid var(--color-link);
+    border-radius: 0 var(--radius) var(--radius) 0;
+  }
+}
+
 @media (max-width: 768px) {
   :root { --content-width: 100%; }
   .main { padding: 24px 16px 60px; }

@@ -12,6 +12,7 @@ mathjax: true
 ---
 
 import Figure from '@/components/Figure.astro'
+import Sidenote from '@/components/Sidenote.astro'
 
 <p class="lead">In the trillion-parameter era, low-precision computation is no longer a compromise on accuracy — it is a deliberate engineering choice.</p>
 
@@ -195,6 +196,8 @@ DeepSeek-V4 applies FP4 (MXFP4) QAT to MoE Expert weights, with a clever core de
 Since both steps are exact, the entire FP4→FP8 dequantization is strictly lossless.
 
 <Figure src="/svg/fp4-to-fp8-lossless.svg" caption="Lossless FP4→FP8 dequantization: exact type cast + exact scale bit-shift" width="680px" />
+
+In the diagram, 1.5 is encoded as `0 0111 100` in FP8 E4M3.<Sidenote label="?">**Floating-point encoding**: a float is stored as three fields `[S | E | M]` and decoded as (−1)^S × 2^(E−bias) × (1 + M/2^m), where bias = 2^(e−1) − 1, e is the number of exponent bits, and m is the number of mantissa bits. In FP8 E4M3, bias = 2³ − 1 = 7 and m = 3. For `0 | 0111 | 100`: S=0, E=7, M=4, giving (−1)⁰ × 2^(7−7) × (1 + 4/8) = 1 × 1 × 1.5 = **1.5**. After ×2², the exponent increases by 2: E=9=`1001`, mantissa unchanged `100`, giving 2^(9−7) × 1.5 = 4 × 1.5 = **6.0**.</Sidenote>
 
 This means the entire QAT pipeline can directly reuse the existing FP8 training framework with no modifications to the backward pass.
 

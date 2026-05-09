@@ -80,8 +80,8 @@
   <!-- Legend -->
   <line x1="60" y1="125" x2="72" y2="125" stroke="#ccc" stroke-width="1"/>
   <text x="76" y="128" font-size="9" fill="#9b9a97">FP8 grid (256 values)</text>
-  <circle cx="160" cy="125" r="3.5" fill="#4a90d9"/>
-  <text x="168" y="128" font-size="9" fill="#4a90d9">FP4 values (16 values) — all on FP8 grid</text>
+  <circle cx="200" cy="125" r="3.5" fill="#4a90d9"/>
+  <text x="208" y="128" font-size="9" fill="#4a90d9">FP4 values (16 values) — all on FP8 grid</text>
 
   <!-- Divider -->
   <line x1="60" y1="145" x2="640" y2="145" stroke="#e9e9e7" stroke-width="1" stroke-dasharray="4,3"/>
