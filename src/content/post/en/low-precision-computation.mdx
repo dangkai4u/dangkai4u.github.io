@@ -21,9 +21,9 @@ import Sidenote from '@/components/Sidenote.astro'
 
 Scaling laws continue to hold: model sizes have grown from tens of billions to hundreds of billions to trillions of parameters, and the compute and memory costs for training and inference have surged accordingly. Yet GPU memory and compute capacity cannot keep pace with the rate of model growth. Using low precision to store parameters or perform computation has become the industry's inevitable response. From BF16 at 2 bytes to FP8 at 1 byte to FP4 at 0.5 byte, each step down nearly halves both memory footprint and compute cost.
 
-The impact is tangible. DeepSeek-V3's 671B parameters require over 1.3TB of memory in BF16, necessitating at least two-node deployment; switching to FP8 compresses this to roughly 685GB, fitting on a single 8×H200 machine <Ref n={1} />. GPT-OSS's 120B parameters, with MXFP4-quantized MoE weights, fit entirely on a single 80GB GPU <Ref n={3} />. And DeepSeek-V4-Pro, at 1.6T parameters with MoE Experts stored in FP4 and other modules in FP8, can run inference on a single 8×B200 node <Ref n={2} />.
+The impact is tangible. DeepSeek-V3's 671B parameters require over 1.3TB of memory in BF16, necessitating at least two-node deployment; switching to FP8 compresses this to roughly 685GB, fitting on a single 8×H200 machine <Ref n={1} />. GPT-OSS's 120B parameters, with MXFP4-quantized MoE weights, fit entirely on a single 80GB GPU <Ref n={2} />. And DeepSeek-V4-Pro, at 1.6T parameters with MoE Experts stored in FP4 and other modules in FP8, can run inference on a single 8×B200 node <Ref n={3} />.
 
-These are not just inference-time compression tricks. DeepSeek-V3's FP8 runs throughout the entire training process, with loss closely tracking the BF16 baseline <Ref n={1} />. DeepSeek-V4 embeds FP4 into the training pipeline itself via Quantization-Aware Training, rather than applying quantization post hoc <Ref n={2} />. Low precision is evolving from an inference optimization into part of the training paradigm.
+These are not just inference-time compression tricks. DeepSeek-V3's FP8 runs throughout the entire training process, with loss closely tracking the BF16 baseline <Ref n={1} />. DeepSeek-V4 embeds FP4 into the training pipeline itself via Quantization-Aware Training, rather than applying quantization post hoc <Ref n={3} />. Low precision is evolving from an inference optimization into part of the training paradigm.
 
 How do we control the quality loss? The following covers three dimensions: numerical formats, scaling, and precision loss mitigation.
 
@@ -44,7 +44,7 @@ A floating-point number consists of three components: sign bit (S), exponent bit
 | FP8 E5M2 | 8 | 1+5+2 | 256 | 57,344 | 1 byte |
 | FP4 E2M1 | 4 | 1+2+1 | 16 | 6 | 0.5 byte |
 
-Early deep learning used FP32 — 4 bytes per parameter, more than enough precision but enormous compute and storage overhead. Mixed Precision Training, proposed in 2018 <Ref n={5} /><Ref n={11} />, uses FP16 for forward and backward passes to achieve a 2× throughput boost, while maintaining FP32 master weights for parameter updates, balancing speed and accuracy. This quickly became standard practice.
+Early deep learning used FP32 — 4 bytes per parameter, more than enough precision but enormous compute and storage overhead. Mixed Precision Training, proposed in 2018 <Ref n={4} /><Ref n={5} />, uses FP16 for forward and backward passes to achieve a 2× throughput boost, while maintaining FP32 master weights for parameter updates, balancing speed and accuracy. This quickly became standard practice.
 
 However, FP16 revealed clear limitations for large model training. With only 5 exponent bits, FP16's dynamic range caps at 65,504. As models scale up, gradients frequently produce extreme values that exceed this range — overflow triggers loss spikes, underflow zeros out gradients.
 
@@ -64,11 +64,11 @@ Notably, DeepSeek-V3 chose to use E4M3 exclusively, relying on fine-grained scal
 
 Two technical routes exist in quantization: floating-point (FP) and integer (INT). Their core difference lies in how values are distributed:
 
-<Figure src="/svg/fp8-vs-int8-distribution.svg" caption="FP8 logarithmic spacing vs INT8 uniform spacing" width="650px" />
+<Figure src="/svg/fp8-vs-int8-distribution.svg" num="Fig. 1" caption="FP8 logarithmic spacing vs INT8 uniform spacing" width="650px" />
 
 Neural network weights and activations typically follow a bell-shaped distribution — most values cluster near zero, with a few outliers at the tails. FP's logarithmic spacing naturally provides higher resolution near zero, matching this distribution. INT distributes representational capacity uniformly across the entire range, wasting capacity in sparse tail regions while offering less resolution near zero than FP formats.
 
-So what is INT's value? **Hardware cost.** An FP8 FMA (fused multiply-add) unit occupies 40-50% more die area than INT8, with higher power consumption. On edge devices, mobile, and dedicated inference chips, INT remains the mainstream choice. Additionally, INT toolchains are more mature (GPTQ <Ref n={9} />, AWQ <Ref n={10} />, bitsandbytes), and virtually all GPUs support INT8 computation.
+So what is INT's value? **Hardware cost.** An FP8 FMA (fused multiply-add) unit occupies 40-50% more die area than INT8, with higher power consumption. On edge devices, mobile, and dedicated inference chips, INT remains the mainstream choice. Additionally, INT toolchains are more mature (GPTQ <Ref n={7} />, AWQ <Ref n={8} />, bitsandbytes <Ref n={9} />), and virtually all GPUs support INT8 computation.
 
 **In short: choose FP for precision-sensitive scenarios, INT when hardware-constrained.**
 
@@ -90,9 +90,9 @@ Scaling maps the original value distribution into the low-precision format's eff
 
 ### 3.2 Scaling Granularities
 
-How much data should a single scale factor cover? Larger coverage means outliers have more destructive impact on overall precision; finer coverage yields higher precision but greater overhead. The industry has evolved several approaches <Ref n={12} />:
+How much data should a single scale factor cover? Larger coverage means outliers have more destructive impact on overall precision; finer coverage yields higher precision but greater overhead. The industry has evolved several approaches <Ref n={10} />:
 
-<Figure src="/svg/scaling-granularity.svg" caption="Scaling granularities compared" width="700px" />
+<Figure src="/svg/scaling-granularity.svg" num="Fig. 2" caption="Scaling granularities compared" width="700px" />
 
 | Method | Granularity | Scale Format | Precision | Efficiency | Hardware |
 |--------|------------|-------------|-----------|------------|---------|
@@ -107,7 +107,7 @@ How much data should a single scale factor cover? Larger coverage means outliers
 
 **Tile-wise** goes finer still, computing one scale per 128 channels along the token dimension. Activation outliers tend to concentrate in specific channels (some channels' average magnitude can be 10-100× that of others), and per-token fine-grained scaling adapts precisely to this pattern.
 
-**MXFP8** is the Microscaling standard proposed by OCP (Open Compute Project) <Ref n={7} />. Unlike the three "custom scaling" approaches above, MXFP8 builds scaling directly into the format specification: every 32 elements share one E8M0 scale factor (8-bit pure exponent, no mantissa, can only represent powers of 2).
+**MXFP8** is the Microscaling standard proposed by OCP (Open Compute Project) <Ref n={11} />. Unlike the three "custom scaling" approaches above, MXFP8 builds scaling directly into the format specification: every 32 elements share one E8M0 scale factor (8-bit pure exponent, no mantissa, can only represent powers of 2).
 
 In terms of granularity, MXFP8 is much finer than block-wise (16,384 elements/group), but its scale is restricted to power-of-2, yielding less precision than FP32 scales. The effective per-parameter cost is 8.25 bits (8 + 8/32). Hopper GPUs can support it via software emulation; Blackwell provides native hardware acceleration. The MXFP4 discussed in Section 3.3 belongs to the same MX family.
 
@@ -117,9 +117,9 @@ On efficiency, the first three approaches store scales in FP32, requiring FP32 f
 
 ### 3.3 FP4: Format and Deployment Constraints
 
-FP4 has only 16 values, requiring even finer-grained scaling strategies. Two mainstream approaches currently exist: NVIDIA's proprietary NVFP4 <Ref n={13} /> and the OCP open standard MXFP4:
+FP4 has only 16 values, requiring even finer-grained scaling strategies. Two mainstream approaches currently exist: NVIDIA's proprietary NVFP4 <Ref n={12} /> and the OCP open standard MXFP4:
 
-<Figure src="/svg/fp4-format-comparison.svg" caption="NVFP4 vs MXFP4 format comparison" width="680px" />
+<Figure src="/svg/fp4-format-comparison.svg" num="Fig. 3" caption="NVFP4 vs MXFP4 format comparison" width="680px" />
 
 | Property | NVFP4 | MXFP4 |
 |----------|-------|-------|
@@ -130,7 +130,7 @@ FP4 has only 16 values, requiring even finer-grained scaling strategies. Two mai
 | B200 throughput | Baseline | Slightly higher (E8M0 scale is simpler in hardware) |
 | Ecosystem | NVIDIA proprietary | AMD/Intel/Meta/... multi-vendor |
 
-NVFP4 uses smaller blocks (16 vs 32) and two-level scaling for better precision — in GPT-OSS fine-tuning experiments, NVFP4's validation loss was about 2-3% lower than MXFP4 <Ref n={4} />. However, MXFP4's E8M0 power-of-2 scale only requires bit-shift for dequantization, making it simpler in hardware with slightly better throughput; it also enjoys broader hardware support as an OCP open standard. In practice, the choice depends on precision vs ecosystem priorities. Note the "4.25 bits" figure: FP4 is nominally 4-bit, but with scale storage overhead, each parameter effectively costs 4.25-4.5 bits.
+NVFP4 uses smaller blocks (16 vs 32) and two-level scaling for better precision — in GPT-OSS fine-tuning experiments, NVFP4's validation loss was about 2-3% lower than MXFP4 <Ref n={13} />. However, MXFP4's E8M0 power-of-2 scale only requires bit-shift for dequantization, making it simpler in hardware with slightly better throughput; it also enjoys broader hardware support as an OCP open standard. In practice, the choice depends on precision vs ecosystem priorities. Note the "4.25 bits" figure: FP4 is nominally 4-bit, but with scale storage overhead, each parameter effectively costs 4.25-4.5 bits.
 
 Two practical constraints affect FP4 deployment. First, 4-bit is not byte-aligned: two FP4 values must be packed into a single byte with scales tightly arranged, and reading a single FP4 value requires bit shifting and masking with special scale alignment handling — all adding kernel implementation complexity. Second, native FP4 Tensor Core support is currently limited to NVIDIA's Blackwell architecture (B100/B200); on Hopper and earlier GPUs, FP4 can only run via software emulation without real throughput gains — the primary reason FP4 has not yet seen widespread adoption like FP8.
 
@@ -161,7 +161,7 @@ Consider the value 0.2 — the two nearest FP4 representable values are 0 and 0.
 > - **Round-to-Nearest**: always rounds to 0 → persistent information loss
 > - **Stochastic Rounding**: 40% probability → 0.5, 60% probability → 0. Expected value E[SR(0.2)] = 0.2 ✓ unbiased
 
-Stochastic Rounding rounds probabilistically, guaranteeing that the expected value equals the original (unbiased estimation). Individual rounds are noisy, but over many iterations the parameter update direction remains correct. With FP4's mere 16 representable values, this unbiasedness is virtually a prerequisite for training convergence. Quartet <Ref n={8} />, NVFP4, and other FP4 training schemes all adopt this strategy.
+Stochastic Rounding rounds probabilistically, guaranteeing that the expected value equals the original (unbiased estimation). Individual rounds are noisy, but over many iterations the parameter update direction remains correct. With FP4's mere 16 representable values, this unbiasedness is virtually a prerequisite for training convergence. Quartet <Ref n={14} />, NVFP4, and other FP4 training schemes all adopt this strategy.
 
 ### 4.3 Module-Level Mixed Precision
 
@@ -177,24 +177,24 @@ Not all modules need equal precision. Different Transformer modules vary signifi
 | LayerNorm | High | FP32 | Very few parameters (a few KB); high precision at no extra cost |
 | MoE Experts | Low | FP4/INT4 | 90%+ of total parameters, only a few activated per inference |
 
-**Why is FFN more compression-tolerant than Attention?** FFN's parameter matrices primarily serve as "knowledge storage" — small perturbations to individual parameters are smoothed by subsequent nonlinear functions and LayerNorm. In Attention, $QK^T$ dot products feed directly into Softmax — an exponential function where tiny input perturbations are amplified exponentially. This is why DeepSeek-V4 compresses MoE Experts (essentially FFN) to FP4 while keeping Attention computation at FP8 <Ref n={2} />.
+**Why is FFN more compression-tolerant than Attention?** FFN's parameter matrices primarily serve as "knowledge storage" — small perturbations to individual parameters are smoothed by subsequent nonlinear functions and LayerNorm. In Attention, $QK^T$ dot products feed directly into Softmax — an exponential function where tiny input perturbations are amplified exponentially. This is why DeepSeek-V4 compresses MoE Experts (essentially FFN) to FP4 while keeping Attention computation at FP8 <Ref n={3} />.
 
 ### 4.4 Quantization-Aware Training
 
 The preceding methods reduce error at the computation level. QAT takes a different approach from the training perspective: letting the model "see" quantized weights during training, proactively adapting to precision degradation.
 
-DeepSeek-V4 applies FP4 (MXFP4) QAT to MoE Expert weights, with a clever core design: **FP4→FP8 dequantization is lossless** <Ref n={2} />. This holds because neither step introduces rounding:
+DeepSeek-V4 applies FP4 (MXFP4) QAT to MoE Expert weights, with a clever core design: **FP4→FP8 dequantization is lossless** <Ref n={3} />. This holds because neither step introduces rounding:
 
 - **Type conversion is exact**: Every representable value in FP4 E2M1 (2 exponent + 1 mantissa bits) can be exactly represented in FP8 E4M3 (4 exponent + 3 mantissa bits). FP8 strictly contains FP4 in both exponent and mantissa dimensions, so the FP4→FP8 cast requires no rounding.
 - **Scale application is exact**: MXFP4 scales use E8M0 format — pure powers of 2 (e.g., 2⁰, 2¹, 2⁻¹ ...). Multiplying a floating-point number by 2ⁿ only shifts the exponent field without touching the mantissa, producing no rounding error.
 
 Since both steps are exact, the entire FP4→FP8 dequantization is strictly lossless. In the diagram, 1.5 is encoded as <Sidenote label="0 0111 100">**Floating-point encoding**: a float is stored as three fields [S | E | M] and decoded as (−1)^S × 2^(E−bias) × (1 + M/2^m), where bias = 2^(e−1) − 1, e is the number of exponent bits, and m is the number of mantissa bits. In FP8 E4M3, bias = 2³ − 1 = 7 and m = 3. For 0 | 0111 | 100: S=0, E=7, M=4, giving (−1)⁰ × 2^(7−7) × (1 + 4/8) = 1 × 1 × 1.5 = **1.5**. After ×2², the exponent increases by 2: E=9=1001, mantissa unchanged 100, giving 2^(9−7) × 1.5 = 4 × 1.5 = **6.0**.</Sidenote> in FP8 E4M3; after multiplying by scale 2², the exponent increases by 2 while the mantissa stays unchanged, yielding 6.0 — both steps land exactly on the FP8 grid.
 
-<Figure src="/svg/fp4-to-fp8-lossless.svg" caption="Lossless FP4→FP8 dequantization: exact type cast + exact scale bit-shift" width="680px" />
+<Figure src="/svg/fp4-to-fp8-lossless.svg" num="Fig. 4" caption="Lossless FP4→FP8 dequantization: exact type cast + exact scale bit-shift" width="680px" />
 
 This means the entire QAT pipeline can directly reuse the existing FP8 training framework with no modifications to the backward pass. The concrete workflow:
 
-<Figure src="/svg/qat-workflow.svg" caption="QAT training and inference workflow" width="680px" />
+<Figure src="/svg/qat-workflow.svg" num="Fig. 5" caption="QAT training and inference workflow" width="680px" />
 
 Simulated quantization during training preserves gradient signal integrity, while real FP4 during inference achieves actual hardware acceleration — model behavior stays consistent across both phases.
 
@@ -208,7 +208,7 @@ Simulated quantization during training preserves gradient signal integrity, whil
 | Training (efficient) | FP8 / MXFP8 | Hopper+ (MXFP8 native on Blackwell) | Minimal, near-lossless |
 | Training (aggressive) | FP4 | Blackwell | Requires QAT |
 | Inference (near-lossless) | FP8 / MXFP8 | Hopper+ (MXFP8 native on Blackwell) | Negligible |
-| Inference (memory-saving) | INT4 AWQ/GPTQ | Universal | Slight degradation |
+| Inference (memory-saving) | INT4 AWQ / GPTQ | Universal | Slight degradation |
 | Inference (max throughput) | NVFP4 / MXFP4 | Blackwell | Requires QAT |
 
 Low-precision computation is not simply about reducing bit width — it requires systematic design across format selection, scaling strategy, and module-level precision allocation. From DeepSeek-V3's FP8 to DeepSeek-V4's FP4+FP8 hybrid to GPT-OSS's native MXFP4 release, this trajectory is maturing rapidly.
@@ -221,26 +221,28 @@ FP8's 256 representable values are far from precise enough on their own — fine
 
 <span id="ref-1">[1]</span> DeepSeek-AI. "DeepSeek-V3 Technical Report." arXiv:2412.19437, 2024. https://arxiv.org/abs/2412.19437
 
-<span id="ref-2">[2]</span> DeepSeek-AI. "DeepSeek-V4: Towards Highly Efficient Million-Token Context Intelligence." 2026. https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro/blob/main/DeepSeek_V4.pdf
+<span id="ref-2">[2]</span> OpenAI. "Introducing GPT-OSS." 2025. https://openai.com/index/introducing-gpt-oss/
 
-<span id="ref-3">[3]</span> OpenAI. "Introducing GPT-OSS." 2025. https://openai.com/index/introducing-gpt-oss/
+<span id="ref-3">[3]</span> DeepSeek-AI. "DeepSeek-V4: Towards Highly Efficient Million-Token Context Intelligence." 2026. https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro/blob/main/DeepSeek_V4.pdf
 
-<span id="ref-4">[4]</span> NVIDIA. "Fine-Tuning GPT-OSS for Accuracy and Performance with Quantization Aware Training." NVIDIA Developer Blog, 2025. https://developer.nvidia.com/blog/fine-tuning-gpt-oss-for-accuracy-and-performance-with-quantization-aware-training/
+<span id="ref-4">[4]</span> Micikevicius et al. "Mixed Precision Training." ICLR 2018. https://arxiv.org/abs/1710.03740
 
-<span id="ref-5">[5]</span> Micikevicius et al. "Mixed Precision Training." ICLR 2018. https://arxiv.org/abs/1710.03740
+<span id="ref-5">[5]</span> NVIDIA. "Mixed-Precision Training of Deep Neural Networks." NVIDIA Developer Blog, 2017. https://developer.nvidia.com/blog/mixed-precision-training-deep-neural-networks/
 
 <span id="ref-6">[6]</span> Micikevicius et al. "FP8 Formats for Deep Learning." arXiv:2209.05433, 2022. https://arxiv.org/abs/2209.05433
 
-<span id="ref-7">[7]</span> OCP. "Microscaling Formats (MX) Specification v1.0." 2023. https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf
+<span id="ref-7">[7]</span> Frantar et al. "GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers." ICLR 2023. https://arxiv.org/abs/2210.17323
 
-<span id="ref-8">[8]</span> Castro et al. "Quartet: Native FP4 Training Can Be Optimal for Large Language Models." NeurIPS 2025. https://arxiv.org/abs/2505.14669
+<span id="ref-8">[8]</span> Lin et al. "AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration." MLSys 2024. https://arxiv.org/abs/2306.00978
 
-<span id="ref-9">[9]</span> Frantar et al. "GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers." ICLR 2023. https://arxiv.org/abs/2210.17323
+<span id="ref-9">[9]</span> Dettmers et al. "LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale." NeurIPS 2022. https://arxiv.org/abs/2208.07339
 
-<span id="ref-10">[10]</span> Lin et al. "AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration." MLSys 2024. https://arxiv.org/abs/2306.00978
+<span id="ref-10">[10]</span> NVIDIA. "Per-Tensor and Per-Block Scaling Strategies for Effective FP8 Training." NVIDIA Developer Blog, 2025. https://developer.nvidia.com/blog/per-tensor-and-per-block-scaling-strategies-for-effective-fp8-training/
 
-<span id="ref-11">[11]</span> NVIDIA. "Mixed-Precision Training of Deep Neural Networks." NVIDIA Developer Blog, 2017. https://developer.nvidia.com/blog/mixed-precision-training-deep-neural-networks/
+<span id="ref-11">[11]</span> OCP. "Microscaling Formats (MX) Specification v1.0." 2023. https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf
 
-<span id="ref-12">[12]</span> NVIDIA. "Per-Tensor and Per-Block Scaling Strategies for Effective FP8 Training." NVIDIA Developer Blog, 2025. https://developer.nvidia.com/blog/per-tensor-and-per-block-scaling-strategies-for-effective-fp8-training/
+<span id="ref-12">[12]</span> NVIDIA. "NVFP4 Trains with Precision of 16-Bit and Speed and Efficiency of 4-Bit." NVIDIA Developer Blog, 2025. https://developer.nvidia.com/blog/nvfp4-trains-with-precision-of-16-bit-and-speed-and-efficiency-of-4-bit/
 
-<span id="ref-13">[13]</span> NVIDIA. "NVFP4 Trains with Precision of 16-Bit and Speed and Efficiency of 4-Bit." NVIDIA Developer Blog, 2025. https://developer.nvidia.com/blog/nvfp4-trains-with-precision-of-16-bit-and-speed-and-efficiency-of-4-bit/
+<span id="ref-13">[13]</span> NVIDIA. "Fine-Tuning GPT-OSS for Accuracy and Performance with Quantization Aware Training." NVIDIA Developer Blog, 2025. https://developer.nvidia.com/blog/fine-tuning-gpt-oss-for-accuracy-and-performance-with-quantization-aware-training/
+
+<span id="ref-14">[14]</span> Castro et al. "Quartet: Native FP4 Training Can Be Optimal for Large Language Models." NeurIPS 2025. https://arxiv.org/abs/2505.14669

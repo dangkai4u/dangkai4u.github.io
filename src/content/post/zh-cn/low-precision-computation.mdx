@@ -21,9 +21,9 @@ import Sidenote from '@/components/Sidenote.astro'
 
 Scaling Law 仍在延续，模型参数量从百亿到千亿再到万亿，训练和推理的算力与显存开销急剧增长。GPU 的显存与算力增长远不及模型的膨胀速度，低精度存储和计算成为必然选择。从 BF16 的 2 bytes 到 FP8 的 1 byte 再到 FP4 的 0.5 byte，每降一级，显存和计算量近乎减半。
 
-几个数字可以直观感受这个变化。DeepSeek-V3 的 671B 参数用 BF16 需要超过 1.3TB 显存，至少跨两个节点部署；换成 FP8 后压缩到约 685GB，一台 8×H200 单机即可承载 <Ref n={1} />。GPT-OSS 的 120B 参数通过 MXFP4 量化 MoE 权重，整个模型塞进了单张 80GB GPU <Ref n={3} />。而 DeepSeek-V4-Pro 达到 1.6T 参数，MoE Expert 以 FP4 存储、其余模块 FP8，单台 8×B200 节点即可完成推理 <Ref n={2} />。
+几个数字可以直观感受这个变化。DeepSeek-V3 的 671B 参数用 BF16 需要超过 1.3TB 显存，至少跨两个节点部署；换成 FP8 后压缩到约 685GB，一台 8×H200 单机即可承载 <Ref n={1} />。GPT-OSS 的 120B 参数通过 MXFP4 量化 MoE 权重，整个模型塞进了单张 80GB GPU <Ref n={2} />。而 DeepSeek-V4-Pro 达到 1.6T 参数，MoE Expert 以 FP4 存储、其余模块 FP8，单台 8×B200 节点即可完成推理 <Ref n={3} />。
 
-这些并不只是推理侧的压缩技巧。DeepSeek-V3 的 FP8 是贯穿训练全程的，loss 与 BF16 基线接近 <Ref n={1} />；DeepSeek-V4 通过 Quantization-Aware Training 将 FP4 嵌入训练流程本身，而非事后量化 <Ref n={2} />。低精度已经从推理优化手段演变为训练范式的一部分。
+这些并不只是推理侧的压缩技巧。DeepSeek-V3 的 FP8 是贯穿训练全程的，loss 与 BF16 基线接近 <Ref n={1} />；DeepSeek-V4 通过 Quantization-Aware Training 将 FP4 嵌入训练流程本身，而非事后量化 <Ref n={3} />。低精度已经从推理优化手段演变为训练范式的一部分。
 
 质量损失如何控制？下面从数值格式、Scaling 和精度损失缓解三个层面展开。
 
@@ -44,7 +44,7 @@ Scaling Law 仍在延续，模型参数量从百亿到千亿再到万亿，训�
 | FP8 E5M2 | 8 | 1+5+2 | 256 | 57,344 | 1 byte |
 | FP4 E2M1 | 4 | 1+2+1 | 16 | 6 | 0.5 byte |
 
-早期深度学习训练使用 FP32，每个参数 4 bytes，精度绰绰有余但计算和存储开销巨大。2018 年提出的混合精度训练（Mixed Precision Training）<Ref n={5} /><Ref n={11} />，核心思路是：前向和反向传播用 FP16 计算以获得 2 倍吞吐提升，同时维护一份 FP32 的 master weights 用于参数更新，兼顾速度与精度。这一方案迅速成为标准实践。
+早期深度学习训练使用 FP32，每个参数 4 bytes，精度绰绰有余但计算和存储开销巨大。2018 年提出的混合精度训练（Mixed Precision Training）<Ref n={4} /><Ref n={5} />，核心思路是：前向和反向传播用 FP16 计算以获得 2 倍吞吐提升，同时维护一份 FP32 的 master weights 用于参数更新，兼顾速度与精度。这一方案迅速成为标准实践。
 
 然而 FP16 在大模型训练中暴露出明显的局限性。FP16 只有 5 位指数，动态范围上限为 65,504。当模型规模增大后，梯度中容易出现超出该范围的极端值——上溢直接触发 loss spike，下溢则让梯度归零。
 
@@ -64,11 +64,11 @@ Scaling Law 仍在延续，模型参数量从百亿到千亿再到万亿，训�
 
 量化领域存在两条技术路线：浮点（FP）和整数（INT）。它们的核心区别在于数值的分布方式：
 
-<Figure src="/svg/fp8-vs-int8-distribution.svg" caption="FP8 对数间距 vs INT8 均匀间距" width="650px" />
+<Figure src="/svg/fp8-vs-int8-distribution.svg" num="图 1" caption="FP8 对数间距 vs INT8 均匀间距" width="650px" />
 
 神经网络的权重和激活值通常呈钟形分布——大量值聚集在零附近，少数 outlier 散布在两端。FP 格式的对数间距天然在零附近提供更高分辨率，与这种分布形状匹配。INT 格式则将表示能力均匀分配给整个值域，在远离零的稀疏区域浪费了大量表示能力，而零附近的分辨率又不及 FP 格式。
 
-那 INT 还有什么存在价值？**硬件成本。** 一个 FP8 的 FMA（fused multiply-add）单元比 INT8 大 40-50% 的硅片面积，能耗也更高。在边缘设备、手机端、专用推理芯片上，INT 仍然是主流选择。此外，INT 的工具链更成熟（GPTQ <Ref n={9} />、AWQ <Ref n={10} />、bitsandbytes），几乎所有 GPU 都支持 INT8 计算。
+那 INT 还有什么存在价值？**硬件成本。** 一个 FP8 的 FMA（fused multiply-add）单元比 INT8 大 40-50% 的硅片面积，能耗也更高。在边缘设备、手机端、专用推理芯片上，INT 仍然是主流选择。此外，INT 的工具链更成熟（GPTQ <Ref n={7} />、AWQ <Ref n={8} />、bitsandbytes <Ref n={9} />），几乎所有 GPU 都支持 INT8 计算。
 
 简单说：精度敏感选 FP，硬件受限选 INT。
 
@@ -90,9 +90,9 @@ Scaling 的作用是将原始数值分布映射到低精度格式的有效表示
 
 ### 3.2 缩放粒度
 
-但一个 scale factor 应该覆盖多大范围的数据？覆盖范围越大，outlier 对整体精度的影响越大；覆盖范围越小，精度越高但额外开销也随之增加。业界演化出了多种方案 <Ref n={12} />：
+但一个 scale factor 应该覆盖多大范围的数据？覆盖范围越大，outlier 对整体精度的影响越大；覆盖范围越小，精度越高但额外开销也随之增加。业界演化出了多种方案 <Ref n={10} />：
 
-<Figure src="/svg/scaling-granularity.svg" caption="缩放粒度对比" width="700px" />
+<Figure src="/svg/scaling-granularity.svg" num="图 2" caption="缩放粒度对比" width="700px" />
 
 | 方法 | 粒度 | Scale 格式 | 精度 | 效率 | 硬件 |
 |------|------|-----------|------|------|------|
@@ -107,7 +107,7 @@ Scaling 的作用是将原始数值分布映射到低精度格式的有效表示
 
 **Tile-wise** 粒度更细，按 token 维度每 128 个通道计算一个 scale。激活值的 outlier 往往集中在特定通道（某些通道的平均幅值可能是其他通道的 10-100 倍），逐 token 的细粒度缩放能精确适配这种模式。
 
-**MXFP8** 是 OCP（Open Compute Project）提出的 Microscaling 标准 <Ref n={7} />。与前三种"自定义 scaling"不同，MXFP8 把 scaling 直接内建到了格式规范中：每 32 个元素共享一个 E8M0 格式的 scale（8 位纯指数，无尾数，只能表示 2 的幂次）。
+**MXFP8** 是 OCP（Open Compute Project）提出的 Microscaling 标准 <Ref n={11} />。与前三种"自定义 scaling"不同，MXFP8 把 scaling 直接内建到了格式规范中：每 32 个元素共享一个 E8M0 格式的 scale（8 位纯指数，无尾数，只能表示 2 的幂次）。
 
 粒度上，MXFP8 比 block-wise（16384 元素/组）细得多，但 scale 只能是 power-of-2，精度不如 FP32 scale。每参数实际开销 8.25 bits（8 + 8/32）。Hopper GPU 可通过软件模拟支持，Blackwell 提供原生硬件加速。后面 3.3 节讨论的 MXFP4 属于同一个 MX 系列。
 
@@ -117,9 +117,9 @@ Scaling 的作用是将原始数值分布映射到低精度格式的有效表示
 
 ### 3.3 FP4：格式与部署约束
 
-FP4 只有 16 个值，需要更加细粒度的 scaling 策略。当前有两种主流方案：NVIDIA 专有的 NVFP4 <Ref n={13} /> 和 OCP 开放标准的 MXFP4：
+FP4 只有 16 个值，需要更加细粒度的 scaling 策略。当前有两种主流方案：NVIDIA 专有的 NVFP4 <Ref n={12} /> 和 OCP 开放标准的 MXFP4：
 
-<Figure src="/svg/fp4-format-comparison.svg" caption="NVFP4 vs MXFP4 格式对比" width="680px" />
+<Figure src="/svg/fp4-format-comparison.svg" num="图 3" caption="NVFP4 vs MXFP4 格式对比" width="680px" />
 
 | 特性 | NVFP4 | MXFP4 |
 |------|-------|-------|
@@ -130,7 +130,7 @@ FP4 只有 16 个值，需要更加细粒度的 scaling 策略。当前有两种
 | B200 吞吐 | 基准 | 略高（E8M0 scale 硬件实现更简单） |
 | 生态 | NVIDIA 专有 | AMD/Intel/Meta/... 多厂商 |
 
-NVFP4 用更小的块（16 vs 32）和两层缩放换取了更好的精度，在 GPT-OSS 微调实验中 validation loss 比 MXFP4 低约 2-3% <Ref n={4} />。但 MXFP4 的 E8M0 power-of-2 scale 反量化只需位移操作，硬件实现更简单，吞吐略优；同时作为 OCP 开放标准获得了更广泛的硬件支持。实际选择取决于项目对精度和生态的优先级。另外，"4.25 bits"这个数字也值得留意——FP4 表面上是 4-bit，但加上 scale 的存储开销后，每个参数实际占 4.25-4.5 bits。
+NVFP4 用更小的块（16 vs 32）和两层缩放换取了更好的精度，在 GPT-OSS 微调实验中 validation loss 比 MXFP4 低约 2-3% <Ref n={13} />。但 MXFP4 的 E8M0 power-of-2 scale 反量化只需位移操作，硬件实现更简单，吞吐略优；同时作为 OCP 开放标准获得了更广泛的硬件支持。实际选择取决于项目对精度和生态的优先级。另外，"4.25 bits"这个数字也值得留意——FP4 表面上是 4-bit，但加上 scale 的存储开销后，每个参数实际占 4.25-4.5 bits。
 
 部署层面还有两个实际约束。首先，4-bit 不是字节对齐的，存储时需要将两个 FP4 值 pack 到一个 byte 中，scale 也要紧凑排列；读取单个 FP4 值需要位移和掩码操作，scale 的对齐也需要专门处理，这给 kernel 实现带来了额外复杂度。其次，FP4 的 Tensor Core 原生支持目前仅限于 NVIDIA Blackwell 架构（B100/B200），在 Hopper 及更早的 GPU 上只能通过软件模拟实现，无法获得真正的吞吐收益——这也是 FP4 尚未像 FP8 那样广泛铺开的主要原因。
 
@@ -161,7 +161,7 @@ DeepSeek-V3 的做法是：Tensor Core 以 FP8 完成乘法获取吞吐优势，
 > - **Round-to-Nearest**：永远舍入到 0 → 信息持续丢失
 > - **Stochastic Rounding**：40% 概率 → 0.5，60% 概率 → 0。期望值 E[SR(0.2)] = 0.2 ✓ 无偏
 
-Stochastic Rounding 以概率方式舍入，保证期望值等于原值（无偏估计）。单次舍入有噪声，但多次迭代后参数更新的方向保持正确。FP4 只有 16 个可表示值，这种无偏性对训练收敛至关重要。Quartet <Ref n={8} />、NVFP4 等 FP4 训练方案均采用了这一策略。
+Stochastic Rounding 以概率方式舍入，保证期望值等于原值（无偏估计）。单次舍入有噪声，但多次迭代后参数更新的方向保持正确。FP4 只有 16 个可表示值，这种无偏性对训练收敛至关重要。Quartet <Ref n={14} />、NVFP4 等 FP4 训练方案均采用了这一策略。
 
 ### 4.3 模块级混合精度
 
@@ -177,24 +177,24 @@ Stochastic Rounding 以概率方式舍入，保证期望值等于原值（无偏
 | LayerNorm | 高 | FP32 | 参数极少（几 KB），高精度无额外成本 |
 | MoE Experts | 低 | FP4/INT4 | 占总参数 90%+，每次仅激活少数 |
 
-**为什么 FFN 比 Attention 更耐压缩？** FFN 的参数矩阵主要承担"知识存储"角色，单个参数的微小偏移会被后续的非线性函数和 LayerNorm 平滑。而 Attention 中 $QK^T$ 的点积结果直接送入 Softmax——指数函数会将输入的微小扰动放大。这也解释了为什么 DeepSeek-V4 将 MoE Expert（本质是 FFN）压到 FP4，而 Attention 计算保持 FP8 <Ref n={2} />。
+**为什么 FFN 比 Attention 更耐压缩？** FFN 的参数矩阵主要承担"知识存储"角色，单个参数的微小偏移会被后续的非线性函数和 LayerNorm 平滑。而 Attention 中 $QK^T$ 的点积结果直接送入 Softmax——指数函数会将输入的微小扰动放大。这也解释了为什么 DeepSeek-V4 将 MoE Expert（本质是 FFN）压到 FP4，而 Attention 计算保持 FP8 <Ref n={3} />。
 
 ### 4.4 Quantization-Aware Training
 
 前面的方法都是在计算层面减少误差。QAT 从训练角度出发：让模型在训练过程中就"见过"量化后的权重，主动学习适应低精度带来的信息损失。
 
-DeepSeek-V4 对 MoE Expert 权重采用 FP4（MXFP4）QAT，其中有一个关键设计：**FP4→FP8 的反量化是无损的** <Ref n={2} />。无损的原因在于两步操作都不引入舍入：
+DeepSeek-V4 对 MoE Expert 权重采用 FP4（MXFP4）QAT，其中有一个关键设计：**FP4→FP8 的反量化是无损的** <Ref n={3} />。无损的原因在于两步操作都不引入舍入：
 
 - **类型转换无损**：FP4 E2M1（2 位指数 + 1 位尾数）的每一个可表示值，在 FP8 E4M3（4 位指数 + 3 位尾数）中都能被精确表示。FP8 在指数和尾数维度上都严格包含 FP4，FP4→FP8 的转换不需要舍入。
 - **Scale 应用无损**：MXFP4 的 scale 采用 E8M0 格式，只能是 2 的幂次（如 2⁰, 2¹, 2⁻¹ ...）。将浮点数乘以 2ⁿ 只移动指数位，不影响尾数，因此不产生舍入误差。
 
 两步都无舍入，整个 FP4→FP8 反量化严格无损。图中以 1.5 为例，其 FP8 E4M3 编码为 <Sidenote label="0 0111 100">**浮点编码**：浮点数存储为三个字段 [S | E | M]，还原公式为 (−1)^S × 2^(E−bias) × (1 + M/2^m)，其中 bias = 2^(e−1) − 1，e 为指数位数，m 为尾数位数。FP8 E4M3 中 bias = 2³ − 1 = 7，m = 3。以 0 | 0111 | 100 为例：S=0，E=7，M=4，还原为 (−1)⁰ × 2^(7−7) × (1 + 4/8) = 1 × 1 × 1.5 = **1.5**。乘以 2² 后指数 +2：E=9=1001，尾数不变 100，还原为 2^(9−7) × 1.5 = 4 × 1.5 = **6.0**。</Sidenote>，乘以 scale 2² 后指数 +2、尾数不变，得到 6.0——两步都精确落在 FP8 网格上。
 
-<Figure src="/svg/fp4-to-fp8-lossless.svg" caption="FP4→FP8 无损反量化：类型转换精确 + scale 位移精确" width="680px" />
+<Figure src="/svg/fp4-to-fp8-lossless.svg" num="图 4" caption="FP4→FP8 无损反量化：类型转换精确 + scale 位移精确" width="680px" />
 
 这意味着整个 QAT 流程可以直接复用现有的 FP8 训练框架，无需修改反向传播逻辑。具体流程：
 
-<Figure src="/svg/qat-workflow.svg" caption="QAT 训练与推理流程" width="680px" />
+<Figure src="/svg/qat-workflow.svg" num="图 5" caption="QAT 训练与推理流程" width="680px" />
 
 训练时用模拟量化保证梯度信号的完整性，推理时用真实 FP4 获得硬件加速，两个阶段的模型行为保持一致。
 
@@ -208,7 +208,7 @@ DeepSeek-V4 对 MoE Expert 权重采用 FP4（MXFP4）QAT，其中有一个关�
 | 训练（高效） | FP8 / MXFP8 | Hopper+（MXFP8 原生 Blackwell） | 极小，接近无损 |
 | 训练（极速） | FP4 | Blackwell | 需配合 QAT 控制 |
 | 推理（近无损） | FP8 / MXFP8 | Hopper+（MXFP8 原生 Blackwell） | 可忽略 |
-| 推理（省显存） | INT4 AWQ/GPTQ | 通用 | 轻微退化 |
+| 推理（省显存） | INT4 AWQ / GPTQ | 通用 | 轻微退化 |
 | 推理（最优吞吐） | NVFP4 / MXFP4 | Blackwell | 需配合 QAT 控制 |
 
 低精度不是简单地降低位宽，而是在格式选择、缩放策略和模块级精度分配上做系统性设计。从 DeepSeek-V3 的 FP8 到 DeepSeek-V4 的 FP4+FP8 混合，再到 GPT-OSS 的 MXFP4 原生发布，这条路线正在快速成熟。
@@ -221,26 +221,28 @@ FP8 本身的 256 个可表示值远不够精确，细粒度 Scaling、高精度
 
 <span id="ref-1">[1]</span> DeepSeek-AI. "DeepSeek-V3 Technical Report." arXiv:2412.19437, 2024. https://arxiv.org/abs/2412.19437
 
-<span id="ref-2">[2]</span> DeepSeek-AI. "DeepSeek-V4: Towards Highly Efficient Million-Token Context Intelligence." 2026. https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro/blob/main/DeepSeek_V4.pdf
+<span id="ref-2">[2]</span> OpenAI. "Introducing GPT-OSS." 2025. https://openai.com/index/introducing-gpt-oss/
 
-<span id="ref-3">[3]</span> OpenAI. "Introducing GPT-OSS." 2025. https://openai.com/index/introducing-gpt-oss/
+<span id="ref-3">[3]</span> DeepSeek-AI. "DeepSeek-V4: Towards Highly Efficient Million-Token Context Intelligence." 2026. https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro/blob/main/DeepSeek_V4.pdf
 
-<span id="ref-4">[4]</span> NVIDIA. "Fine-Tuning GPT-OSS for Accuracy and Performance with Quantization Aware Training." NVIDIA Developer Blog, 2025. https://developer.nvidia.com/blog/fine-tuning-gpt-oss-for-accuracy-and-performance-with-quantization-aware-training/
+<span id="ref-4">[4]</span> Micikevicius et al. "Mixed Precision Training." ICLR 2018. https://arxiv.org/abs/1710.03740
 
-<span id="ref-5">[5]</span> Micikevicius et al. "Mixed Precision Training." ICLR 2018. https://arxiv.org/abs/1710.03740
+<span id="ref-5">[5]</span> NVIDIA. "Mixed-Precision Training of Deep Neural Networks." NVIDIA Developer Blog, 2017. https://developer.nvidia.com/blog/mixed-precision-training-deep-neural-networks/
 
 <span id="ref-6">[6]</span> Micikevicius et al. "FP8 Formats for Deep Learning." arXiv:2209.05433, 2022. https://arxiv.org/abs/2209.05433
 
-<span id="ref-7">[7]</span> OCP. "Microscaling Formats (MX) Specification v1.0." 2023. https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf
+<span id="ref-7">[7]</span> Frantar et al. "GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers." ICLR 2023. https://arxiv.org/abs/2210.17323
 
-<span id="ref-8">[8]</span> Castro et al. "Quartet: Native FP4 Training Can Be Optimal for Large Language Models." NeurIPS 2025. https://arxiv.org/abs/2505.14669
+<span id="ref-8">[8]</span> Lin et al. "AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration." MLSys 2024. https://arxiv.org/abs/2306.00978
 
-<span id="ref-9">[9]</span> Frantar et al. "GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers." ICLR 2023. https://arxiv.org/abs/2210.17323
+<span id="ref-9">[9]</span> Dettmers et al. "LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale." NeurIPS 2022. https://arxiv.org/abs/2208.07339
 
-<span id="ref-10">[10]</span> Lin et al. "AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration." MLSys 2024. https://arxiv.org/abs/2306.00978
+<span id="ref-10">[10]</span> NVIDIA. "Per-Tensor and Per-Block Scaling Strategies for Effective FP8 Training." NVIDIA Developer Blog, 2025. https://developer.nvidia.com/blog/per-tensor-and-per-block-scaling-strategies-for-effective-fp8-training/
 
-<span id="ref-11">[11]</span> NVIDIA. "Mixed-Precision Training of Deep Neural Networks." NVIDIA Developer Blog, 2017. https://developer.nvidia.com/blog/mixed-precision-training-deep-neural-networks/
+<span id="ref-11">[11]</span> OCP. "Microscaling Formats (MX) Specification v1.0." 2023. https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf
 
-<span id="ref-12">[12]</span> NVIDIA. "Per-Tensor and Per-Block Scaling Strategies for Effective FP8 Training." NVIDIA Developer Blog, 2025. https://developer.nvidia.com/blog/per-tensor-and-per-block-scaling-strategies-for-effective-fp8-training/
+<span id="ref-12">[12]</span> NVIDIA. "NVFP4 Trains with Precision of 16-Bit and Speed and Efficiency of 4-Bit." NVIDIA Developer Blog, 2025. https://developer.nvidia.com/blog/nvfp4-trains-with-precision-of-16-bit-and-speed-and-efficiency-of-4-bit/
 
-<span id="ref-13">[13]</span> NVIDIA. "NVFP4 Trains with Precision of 16-Bit and Speed and Efficiency of 4-Bit." NVIDIA Developer Blog, 2025. https://developer.nvidia.com/blog/nvfp4-trains-with-precision-of-16-bit-and-speed-and-efficiency-of-4-bit/
+<span id="ref-13">[13]</span> NVIDIA. "Fine-Tuning GPT-OSS for Accuracy and Performance with Quantization Aware Training." NVIDIA Developer Blog, 2025. https://developer.nvidia.com/blog/fine-tuning-gpt-oss-for-accuracy-and-performance-with-quantization-aware-training/
+
+<span id="ref-14">[14]</span> Castro et al. "Quartet: Native FP4 Training Can Be Optimal for Large Language Models." NeurIPS 2025. https://arxiv.org/abs/2505.14669

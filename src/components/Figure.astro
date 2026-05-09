@@ -4,9 +4,11 @@ interface Props {
   caption?: string;
   alt?: string;
   width?: string;
+  num?: string;
 }
 
-const { src, caption, alt = '', width } = Astro.props;
+const { src, caption, alt = '', width, num } = Astro.props;
+const fullCaption = num && caption ? `${num}. ${caption}` : caption;
 ---
 
 <figure class="figure">
@@ -15,5 +17,5 @@ const { src, caption, alt = '', width } = Astro.props;
     alt={alt || caption || ''}
     style={width ? `max-width: ${width};` : undefined}
   />
-  {caption && <figcaption set:html={caption} />}
+  {fullCaption && <figcaption set:html={fullCaption} />}
 </figure>
