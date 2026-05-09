@@ -171,6 +171,15 @@ img { max-width: 100%; height: auto; }
 
 .post-content { font-size: 1rem; }
 
+.post-content .lead {
+  font-size: 1.2em;
+  color: var(--color-text-secondary);
+  line-height: 1.9;
+  margin-bottom: 2rem;
+  padding-bottom: 1.5rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
 .post-content h2 {
   font-size: 1.5rem;
   font-weight: 600;
