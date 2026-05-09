@@ -58,12 +58,6 @@ It is worth noting that FP8 has two sub-formats with different roles: **E4M3** (
 
 Notably, DeepSeek-V3 chose to use E4M3 exclusively, relying on fine-grained scaling to compensate for the reduced dynamic range — a fairly aggressive choice [1].
 
-A related distinction worth clarifying: **FP8 vs MXFP8**. The FP8 formats discussed above (E4M3 / E5M2) are "bare formats" — each value is stored independently as an 8-bit float, and scaling granularity, format, and storage are entirely up to the framework. DeepSeek-V3's block-wise / tile-wise scaling is an example of this approach.
-
-**MXFP8** is part of the OCP (Open Compute Project) Microscaling standard, belonging to the MX family. It bakes block-level scaling directly into the format specification: every 32 elements share a single E8M0 scale (8 exponent bits, no mantissa — can only represent powers of 2). Dequantization requires only bit-shift operations, making hardware implementation straightforward. However, the effective per-parameter cost rises to 8.25 bits (8 + 8/32), and the fixed block size of 32 offers less flexibility than custom scaling.
-
-In short: standard FP8 leaves scaling to the user (flexible but requires engineering effort), while MXFP8 standardizes scaling into the format (simplifies interoperability but fixes granularity). The MXFP4 format discussed in Section 3.3 belongs to the same MX family.
-
 ### 2.2 FP vs INT: Two Quantization Paths
 
 Two technical routes exist in quantization: floating-point (FP) and integer (INT). Their core difference lies in how values are distributed:
@@ -95,17 +89,18 @@ and the exponent reduction (8→4 bits) may cause overflow or underflow.
 
 Scaling maps the original value distribution into the low-precision format's effective representation space, making full use of its limited capacity. The implementation is straightforward: compute the maximum absolute value `amax` of a data group, then `scale = FP8_MAX / amax`, multiply all values by scale before converting to FP8; dequantization simply divides by scale. This way, FP8's limited 256 representable values concentrate on the actual data range, maximizing quantization precision.
 
-### 3.2 Three Scaling Granularities
+### 3.2 Scaling Granularities
 
-How much data should a single scale factor cover? Larger coverage means outliers have more destructive impact on overall precision; finer coverage yields higher precision but greater overhead. This leads to three granularity levels:
+How much data should a single scale factor cover? Larger coverage means outliers have more destructive impact on overall precision; finer coverage yields higher precision but greater overhead. The industry has evolved several approaches:
 
-<Figure src="/svg/scaling-granularity.svg" caption="Three scaling granularities compared" width="700px" />
+<Figure src="/svg/scaling-granularity.svg" caption="Scaling granularities compared" width="700px" />
 
-| Method | Granularity | Precision | Efficiency | Outlier Robustness |
-|--------|------------|-----------|------------|-------------------|
-| Tensor-wise | 1 scale per entire matrix | Low | Highest | Poor |
-| Block-wise (128×128) | 1 scale per sub-block | Medium | High | Good |
-| Tile-wise (1×128) | 1 scale per 128 elements per row | High | Medium | Best |
+| Method | Granularity | Scale Format | Precision | Efficiency | Hardware |
+|--------|------------|-------------|-----------|------------|---------|
+| Tensor-wise | 1 scale per entire matrix | FP32 | Low | High (single FP32 op) | Hopper+ |
+| Block-wise (128×128) | 1 scale per sub-block | FP32 | Medium | Medium (per-block FP32 ops) | Hopper+ |
+| Tile-wise (1×128) | 1 scale per 128 elements | FP32 | High | Lower (per-tile FP32 ops) | Hopper+ |
+| MXFP8 (OCP) | 1 scale per 32 elements | E8M0 | Medium-High | High (bit-shift, native on Blackwell) | Hopper+ |
 
 **Tensor-wise** was the earliest approach — simply find the maximum absolute value of the entire matrix as the scale. The problem is extreme vulnerability to outliers: a single anomalously large value (e.g., everything is at 0.01 scale but one value is 10) dominates the scale for the entire matrix, drastically reducing quantization resolution for the remaining 99.99% of normal values. This approach is now essentially obsolete.
 
@@ -113,7 +108,13 @@ How much data should a single scale factor cover? Larger coverage means outliers
 
 **Tile-wise** goes finer still, computing one scale per 128 channels along the token dimension. Activation outliers tend to concentrate in specific channels (some channels' average magnitude can be 10-100× that of others), and per-token fine-grained scaling adapts precisely to this pattern.
 
-**DeepSeek-V3's choice** combines both: block-wise 128×128 for weights (weight distributions are stable, block granularity suffices) and tile-wise 1×128 for activations (activations have more outliers, requiring finer granularity). The result is FP8 training loss within 0.25% of the BF16 baseline [1] — demonstrating that FP8 training is entirely viable.
+**MXFP8** is the Microscaling standard proposed by OCP (Open Compute Project). Unlike the three "custom scaling" approaches above, MXFP8 builds scaling directly into the format specification: every 32 elements share one E8M0 scale factor (8-bit pure exponent, no mantissa, can only represent powers of 2).
+
+In terms of granularity, MXFP8 is much finer than block-wise (16,384 elements/group), but its scale is restricted to power-of-2, yielding less precision than FP32 scales. The effective per-parameter cost is 8.25 bits (8 + 8/32). Hopper GPUs can support it via software emulation; Blackwell provides native hardware acceleration. The MXFP4 discussed in Section 3.3 belongs to the same MX family.
+
+On efficiency, the first three approaches store scales in FP32, requiring FP32 floating-point multiplication for dequantization — overhead that grows as scale granularity gets finer. Tile-wise, with one FP32 dequantization per 128 elements, incurs the most overhead. MXFP8, despite having the finest granularity (32 elements/group), uses E8M0 power-of-2 scales where dequantization requires only bit-shift operations — far more efficient than FP32 multiplication. On Blackwell, MXFP8 scale application is handled natively by hardware without additional CUDA Core involvement, making its throughput advantage even more pronounced.
+
+**DeepSeek-V3's choice** did not use MXFP8, opting instead for custom scaling: block-wise 128×128 for weights (weight distributions are stable, block granularity suffices) and tile-wise 1×128 for activations (activations have more outliers, requiring finer granularity). Scales are stored in FP32. This approach offers greater flexibility but requires more engineering effort. The result is FP8 training loss within 0.25% of the BF16 baseline [1].
 
 ### 3.3 FP4: Format and Deployment Constraints
 

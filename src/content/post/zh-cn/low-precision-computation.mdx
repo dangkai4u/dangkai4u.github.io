@@ -58,12 +58,6 @@ Scaling Law 仍在延续，模型参数量从百亿到千亿再到万亿，训�
 
 不过 DeepSeek-V3 全部使用 E4M3，靠细粒度 scaling 补偿动态范围不足，是个比较激进的选择 [1]。
 
-还有一个容易混淆的概念：**FP8 和 MXFP8**。上面讨论的 FP8（E4M3 / E5M2）是"裸格式"——每个值独立存储为 8-bit 浮点数，scaling 的粒度、格式、存储方式全部由框架自行决定。DeepSeek-V3 的 block-wise / tile-wise scaling 就是这种模式。
-
-**MXFP8** 是 OCP（Open Compute Project）提出的 Microscaling 标准，属于 MX 系列。它把 block-level scaling 直接内建到了格式规范中：每 32 个元素共享一个 E8M0 格式的 scale（8 位纯指数，无尾数，只能表示 2 的幂次）。反量化只需位移操作，硬件实现简单；但每参数实际开销为 8.25 bits（8 + 8/32），且 block 大小固定为 32，灵活性不如自定义 scaling。
-
-简单说：标准 FP8 把 scaling 留给用户（灵活但需要工程投入），MXFP8 把 scaling 标准化到格式中（简化互操作但粒度固定）。后面 3.3 节讨论的 MXFP4 属于同一个 MX 系列。
-
 ### 2.2 FP vs INT：两条量化路线
 
 量化领域存在两条技术路线：浮点（FP）和整数（INT）。它们的核心区别在于数值的分布方式：
@@ -95,17 +89,18 @@ FP8 E4M3 能表示的范围：[-448, 448]，共 256 个值
 
 Scaling 的作用是将原始数值分布映射到低精度格式的有效表示空间，充分利用有限的表示能力。具体做法很简单：计算一组数据的最大绝对值 `amax`，然后 `scale = FP8_MAX / amax`，所有值乘以 scale 后再转为 FP8 存储；反量化时除以 scale 即可还原。这样，FP8 有限的 256 个可表示值就能集中覆盖实际数据范围，最大化量化精度。
 
-### 3.2 三种缩放粒度
+### 3.2 缩放粒度
 
-但一个 scale factor 应该覆盖多大范围的数据？覆盖范围越大，outlier 对整体精度的影响越大；覆盖范围越小，精度越高但额外开销也随之增加。业界演化出了三种粒度：
+但一个 scale factor 应该覆盖多大范围的数据？覆盖范围越大，outlier 对整体精度的影响越大；覆盖范围越小，精度越高但额外开销也随之增加。业界演化出了多种方案：
 
-<Figure src="/svg/scaling-granularity.svg" caption="三种缩放粒度对比" width="700px" />
+<Figure src="/svg/scaling-granularity.svg" caption="缩放粒度对比" width="700px" />
 
-| 方法 | 粒度 | 精度 | 效率 | Outlier 鲁棒性 |
-|------|------|------|------|----------------|
-| Tensor-wise | 整个矩阵共享 1 个 scale | 低 | 最高 | 差 |
-| Block-wise (128×128) | 每个子块 1 个 scale | 中 | 高 | 较好 |
-| Tile-wise (1×128) | 每行每 128 元素 1 个 scale | 高 | 中 | 最好 |
+| 方法 | 粒度 | Scale 格式 | 精度 | 效率 | 硬件 |
+|------|------|-----------|------|------|------|
+| Tensor-wise | 整个矩阵 1 个 scale | FP32 | 低 | 高（1 次 FP32 操作） | Hopper+ |
+| Block-wise (128×128) | 每子块 1 个 scale | FP32 | 中 | 中（逐块 FP32 操作） | Hopper+ |
+| Tile-wise (1×128) | 每 128 元素 1 个 scale | FP32 | 高 | 较低（逐段 FP32 操作） | Hopper+ |
+| MXFP8 (OCP) | 每 32 元素 1 个 scale | E8M0 | 中高 | 高（位移操作，Blackwell 原生） | Hopper+ |
 
 **Tensor-wise** 是最早的方案，逻辑简单：找到整个矩阵的最大绝对值作为 scale。问题在于它对 outlier 极其脆弱——矩阵中只要有一个异常大的值（比如其他值都在 0.01 量级，但有一个值是 10），整个矩阵的 scale 就会被这个 outlier 主导，其余 99.99% 的正常值的量化分辨率急剧下降。这种方案现在基本被淘汰了。
 
@@ -113,7 +108,13 @@ Scaling 的作用是将原始数值分布映射到低精度格式的有效表示
 
 **Tile-wise** 粒度更细，按 token 维度每 128 个通道计算一个 scale。激活值的 outlier 往往集中在特定通道（某些通道的平均幅值可能是其他通道的 10-100 倍），逐 token 的细粒度缩放能精确适配这种模式。
 
-**DeepSeek-V3 的选择** 是两者结合：权重用 block-wise 128×128（权重分布相对稳定，block 粒度足够），激活值用 tile-wise 1×128（激活值 outlier 多，需要更细粒度）。最终 FP8 训练的 loss 与 BF16 基线偏差控制在 0.25% 以内 [1]——这个结果证明 FP8 训练在工程上是完全可行的。
+**MXFP8** 是 OCP（Open Compute Project）提出的 Microscaling 标准。与前三种"自定义 scaling"不同，MXFP8 把 scaling 直接内建到了格式规范中：每 32 个元素共享一个 E8M0 格式的 scale（8 位纯指数，无尾数，只能表示 2 的幂次）。
+
+粒度上，MXFP8 比 block-wise（16384 元素/组）细得多，但 scale 只能是 power-of-2，精度不如 FP32 scale。每参数实际开销 8.25 bits（8 + 8/32）。Hopper GPU 可通过软件模拟支持，Blackwell 提供原生硬件加速。后面 3.3 节讨论的 MXFP4 属于同一个 MX 系列。
+
+效率方面，前三种方案的 scale 以 FP32 存储，反量化时需要做 FP32 浮点乘法，这部分开销随 scale 粒度变细而增加——Tile-wise 每 128 个元素就需要一次 FP32 反量化操作，额外计算量最大。MXFP8 虽然粒度最细（32 元素/组），但 E8M0 scale 只能是 2 的幂次，反量化仅需位移操作，比 FP32 乘法高效得多。在 Blackwell 上，MXFP8 的 scale 应用由硬件原生完成，无需额外 CUDA Core 参与，吞吐优势更为明显。
+
+**DeepSeek-V3 的选择** 没有使用 MXFP8，而是自定义 scaling：权重用 block-wise 128×128（权重分布相对稳定，block 粒度足够），激活值用 tile-wise 1×128（激活值 outlier 多，需要更细粒度），scale 均以 FP32 存储。这种方案灵活性更高但需要更多工程投入。最终 FP8 训练的 loss 与 BF16 基线偏差控制在 0.25% 以内 [1]。
 
 ### 3.3 FP4：格式与部署约束
 
