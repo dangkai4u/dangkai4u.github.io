@@ -114,7 +114,7 @@ Scaling 的作用是将原始数值分布映射到低精度格式的有效表示
 
 效率方面，前三种方案的 scale 以 FP32 存储，反量化时需要做 FP32 浮点乘法，这部分开销随 scale 粒度变细而增加——Tile-wise 每 128 个元素就需要一次 FP32 反量化操作，额外计算量最大。MXFP8 虽然粒度最细（32 元素/组），但 E8M0 scale 只能是 2 的幂次，反量化仅需位移操作，比 FP32 乘法高效得多。在 Blackwell 上，MXFP8 的 scale 应用由硬件原生完成，无需额外 CUDA Core 参与，吞吐优势更为明显。
 
-**DeepSeek-V3 的选择** 没有使用 MXFP8，而是自定义 scaling：权重用 block-wise 128×128（权重分布相对稳定，block 粒度足够），激活值用 tile-wise 1×128（激活值 outlier 多，需要更细粒度），scale 均以 FP32 存储。这种方案灵活性更高但需要更多工程投入。最终 FP8 训练的 loss 与 BF16 基线偏差控制在 0.25% 以内 [1]。
+**DeepSeek-V3 的选择** 没有使用 MXFP8，而是自定义 scaling：权重用 block-wise 128×128（权重分布相对稳定，block 粒度足够），激活值用 tile-wise 1×128（激活值 outlier 多，需要更细粒度），scale 均以 FP32 存储。一个关键原因是 DeepSeek-V3 训练时 Blackwell 尚未发布，MXFP8 在 Hopper 上只能软件模拟，缺少原生硬件加速，吞吐优势有限。自定义 scaling 配合 FP32 scale 精度更高、工程可控性更强。最终 FP8 训练的 loss 与 BF16 基线偏差控制在 0.25% 以内 [1]。
 
 ### 3.3 FP4：格式与部署约束
 
