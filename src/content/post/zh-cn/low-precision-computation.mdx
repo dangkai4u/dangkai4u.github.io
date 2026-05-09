@@ -56,7 +56,7 @@ Scaling Law 仍在延续，模型参数量从百亿到千亿再到万亿，训�
 
 **FP4** 更极端：全部只有 16 个值，正数部分能表示的是 {'{'}0, 0.5, 1, 1.5, 2, 3, 4, 6{'}'}。表示能力如此有限，必须依赖多层 scaling 和更精巧的量化策略才能工作。
 
-值得一提的是 FP8 的两个子格式分工明确：**E4M3**（4 位指数 + 3 位尾数）精度更高，通常用于前向传播中的权重和激活值存储；**E5M2**（5 位指数 + 2 位尾数）动态范围更大（最大值 57,344），更适合梯度——梯度的值域波动比权重大得多。
+值得一提的是 FP8 的两个子格式分工明确：**E4M3**（4 位指数 + 3 位尾数）精度更高，通常用于前向传播中的权重和激活值存储；**E5M2**（5 位指数 + 2 位尾数）动态范围更大（最大值 57,344），更适合梯度——梯度的值域波动比权重大得多 <Ref n={6} />。
 
 不过 DeepSeek-V3 全部使用 E4M3，靠细粒度 scaling 补偿动态范围不足，是个比较激进的选择 <Ref n={1} />。
 
@@ -68,7 +68,7 @@ Scaling Law 仍在延续，模型参数量从百亿到千亿再到万亿，训�
 
 神经网络的权重和激活值通常呈钟形分布——大量值聚集在零附近，少数 outlier 散布在两端。FP 格式的对数间距天然在零附近提供更高分辨率，与这种分布形状匹配。INT 格式则将表示能力均匀分配给整个值域，在远离零的稀疏区域浪费了大量表示能力，而零附近的分辨率又不及 FP 格式。
 
-那 INT 还有什么存在价值？**硬件成本。** 一个 FP8 的 FMA（fused multiply-add）单元比 INT8 大 40-50% 的硅片面积，能耗也更高。在边缘设备、手机端、专用推理芯片上，INT 仍然是主流选择。此外，INT 的工具链更成熟（GPTQ、AWQ、bitsandbytes），几乎所有 GPU 都支持 INT8 计算。
+那 INT 还有什么存在价值？**硬件成本。** 一个 FP8 的 FMA（fused multiply-add）单元比 INT8 大 40-50% 的硅片面积，能耗也更高。在边缘设备、手机端、专用推理芯片上，INT 仍然是主流选择。此外，INT 的工具链更成熟（GPTQ <Ref n={9} />、AWQ <Ref n={10} />、bitsandbytes），几乎所有 GPU 都支持 INT8 计算。
 
 简单说：精度敏感选 FP，硬件受限选 INT。
 
@@ -107,7 +107,7 @@ Scaling 的作用是将原始数值分布映射到低精度格式的有效表示
 
 **Tile-wise** 粒度更细，按 token 维度每 128 个通道计算一个 scale。激活值的 outlier 往往集中在特定通道（某些通道的平均幅值可能是其他通道的 10-100 倍），逐 token 的细粒度缩放能精确适配这种模式。
 
-**MXFP8** 是 OCP（Open Compute Project）提出的 Microscaling 标准。与前三种"自定义 scaling"不同，MXFP8 把 scaling 直接内建到了格式规范中：每 32 个元素共享一个 E8M0 格式的 scale（8 位纯指数，无尾数，只能表示 2 的幂次）。
+**MXFP8** 是 OCP（Open Compute Project）提出的 Microscaling 标准 <Ref n={7} />。与前三种"自定义 scaling"不同，MXFP8 把 scaling 直接内建到了格式规范中：每 32 个元素共享一个 E8M0 格式的 scale（8 位纯指数，无尾数，只能表示 2 的幂次）。
 
 粒度上，MXFP8 比 block-wise（16384 元素/组）细得多，但 scale 只能是 power-of-2，精度不如 FP32 scale。每参数实际开销 8.25 bits（8 + 8/32）。Hopper GPU 可通过软件模拟支持，Blackwell 提供原生硬件加速。后面 3.3 节讨论的 MXFP4 属于同一个 MX 系列。
 
@@ -161,7 +161,7 @@ DeepSeek-V3 的做法是：Tensor Core 以 FP8 完成乘法获取吞吐优势，
 > - **Round-to-Nearest**：永远舍入到 0 → 信息持续丢失
 > - **Stochastic Rounding**：40% 概率 → 0.5，60% 概率 → 0。期望值 E[SR(0.2)] = 0.2 ✓ 无偏
 
-Stochastic Rounding 以概率方式舍入，保证期望值等于原值（无偏估计）。单次舍入有噪声，但多次迭代后参数更新的方向保持正确。FP4 只有 16 个可表示值，这种无偏性对训练收敛至关重要。Quartet、NVFP4 等 FP4 训练方案均采用了这一策略。
+Stochastic Rounding 以概率方式舍入，保证期望值等于原值（无偏估计）。单次舍入有噪声，但多次迭代后参数更新的方向保持正确。FP4 只有 16 个可表示值，这种无偏性对训练收敛至关重要。Quartet <Ref n={8} />、NVFP4 等 FP4 训练方案均采用了这一策略。
 
 ### 4.3 模块级混合精度
 
@@ -228,3 +228,13 @@ FP8 本身的 256 个可表示值远不够精确，细粒度 Scaling、高精度
 <span id="ref-4">[4]</span> NVIDIA. "Fine-Tuning GPT-OSS for Accuracy and Performance with Quantization Aware Training." NVIDIA Developer Blog, 2025. https://developer.nvidia.com/blog/fine-tuning-gpt-oss-for-accuracy-and-performance-with-quantization-aware-training/
 
 <span id="ref-5">[5]</span> Micikevicius et al. "Mixed Precision Training." ICLR 2018. https://arxiv.org/abs/1710.03740
+
+<span id="ref-6">[6]</span> Micikevicius et al. "FP8 Formats for Deep Learning." arXiv:2209.05433, 2022. https://arxiv.org/abs/2209.05433
+
+<span id="ref-7">[7]</span> OCP. "Microscaling Formats (MX) Specification v1.0." 2023. https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf
+
+<span id="ref-8">[8]</span> Castro et al. "Quartet: Native FP4 Training Can Be Optimal for Large Language Models." NeurIPS 2025. https://arxiv.org/abs/2505.14669
+
+<span id="ref-9">[9]</span> Frantar et al. "GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers." ICLR 2023. https://arxiv.org/abs/2210.17323
+
+<span id="ref-10">[10]</span> Lin et al. "AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration." MLSys 2024. https://arxiv.org/abs/2306.00978

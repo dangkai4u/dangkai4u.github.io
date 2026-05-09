@@ -56,7 +56,7 @@ Model weights typically cluster around ±0.01 — without scaling, only a handfu
 
 **FP4** is even more extreme: only 16 values total, with the positive representable values being {'{'}0, 0.5, 1, 1.5, 2, 3, 4, 6{'}'}. With such limited representational capacity, multi-level scaling and more sophisticated quantization strategies are essential.
 
-It is worth noting that FP8 has two sub-formats with different roles: **E4M3** (4 exponent + 3 mantissa bits) offers higher precision and is typically used for weight and activation storage in the forward pass; **E5M2** (5 exponent + 2 mantissa bits) provides a wider dynamic range (max 57,344), better suited for gradients whose value range fluctuates more than weights.
+It is worth noting that FP8 has two sub-formats with different roles: **E4M3** (4 exponent + 3 mantissa bits) offers higher precision and is typically used for weight and activation storage in the forward pass; **E5M2** (5 exponent + 2 mantissa bits) provides a wider dynamic range (max 57,344), better suited for gradients whose value range fluctuates more than weights <Ref n={6} />.
 
 Notably, DeepSeek-V3 chose to use E4M3 exclusively, relying on fine-grained scaling to compensate for the reduced dynamic range — a fairly aggressive choice <Ref n={1} />.
 
@@ -68,7 +68,7 @@ Two technical routes exist in quantization: floating-point (FP) and integer (INT
 
 Neural network weights and activations typically follow a bell-shaped distribution — most values cluster near zero, with a few outliers at the tails. FP's logarithmic spacing naturally provides higher resolution near zero, matching this distribution. INT distributes representational capacity uniformly across the entire range, wasting capacity in sparse tail regions while offering less resolution near zero than FP formats.
 
-So what is INT's value? **Hardware cost.** An FP8 FMA (fused multiply-add) unit occupies 40-50% more die area than INT8, with higher power consumption. On edge devices, mobile, and dedicated inference chips, INT remains the mainstream choice. Additionally, INT toolchains are more mature (GPTQ, AWQ, bitsandbytes), and virtually all GPUs support INT8 computation.
+So what is INT's value? **Hardware cost.** An FP8 FMA (fused multiply-add) unit occupies 40-50% more die area than INT8, with higher power consumption. On edge devices, mobile, and dedicated inference chips, INT remains the mainstream choice. Additionally, INT toolchains are more mature (GPTQ <Ref n={9} />, AWQ <Ref n={10} />, bitsandbytes), and virtually all GPUs support INT8 computation.
 
 **In short: choose FP for precision-sensitive scenarios, INT when hardware-constrained.**
 
@@ -107,7 +107,7 @@ How much data should a single scale factor cover? Larger coverage means outliers
 
 **Tile-wise** goes finer still, computing one scale per 128 channels along the token dimension. Activation outliers tend to concentrate in specific channels (some channels' average magnitude can be 10-100× that of others), and per-token fine-grained scaling adapts precisely to this pattern.
 
-**MXFP8** is the Microscaling standard proposed by OCP (Open Compute Project). Unlike the three "custom scaling" approaches above, MXFP8 builds scaling directly into the format specification: every 32 elements share one E8M0 scale factor (8-bit pure exponent, no mantissa, can only represent powers of 2).
+**MXFP8** is the Microscaling standard proposed by OCP (Open Compute Project) <Ref n={7} />. Unlike the three "custom scaling" approaches above, MXFP8 builds scaling directly into the format specification: every 32 elements share one E8M0 scale factor (8-bit pure exponent, no mantissa, can only represent powers of 2).
 
 In terms of granularity, MXFP8 is much finer than block-wise (16,384 elements/group), but its scale is restricted to power-of-2, yielding less precision than FP32 scales. The effective per-parameter cost is 8.25 bits (8 + 8/32). Hopper GPUs can support it via software emulation; Blackwell provides native hardware acceleration. The MXFP4 discussed in Section 3.3 belongs to the same MX family.
 
@@ -161,7 +161,7 @@ Consider the value 0.2 — the two nearest FP4 representable values are 0 and 0.
 > - **Round-to-Nearest**: always rounds to 0 → persistent information loss
 > - **Stochastic Rounding**: 40% probability → 0.5, 60% probability → 0. Expected value E[SR(0.2)] = 0.2 ✓ unbiased
 
-Stochastic Rounding rounds probabilistically, guaranteeing that the expected value equals the original (unbiased estimation). Individual rounds are noisy, but over many iterations the parameter update direction remains correct. With FP4's mere 16 representable values, this unbiasedness is virtually a prerequisite for training convergence. Quartet, NVFP4, and other FP4 training schemes all adopt this strategy.
+Stochastic Rounding rounds probabilistically, guaranteeing that the expected value equals the original (unbiased estimation). Individual rounds are noisy, but over many iterations the parameter update direction remains correct. With FP4's mere 16 representable values, this unbiasedness is virtually a prerequisite for training convergence. Quartet <Ref n={8} />, NVFP4, and other FP4 training schemes all adopt this strategy.
 
 ### 4.3 Module-Level Mixed Precision
 
@@ -228,3 +228,13 @@ FP8's 256 representable values are far from precise enough on their own — fine
 <span id="ref-4">[4]</span> NVIDIA. "Fine-Tuning GPT-OSS for Accuracy and Performance with Quantization Aware Training." NVIDIA Developer Blog, 2025. https://developer.nvidia.com/blog/fine-tuning-gpt-oss-for-accuracy-and-performance-with-quantization-aware-training/
 
 <span id="ref-5">[5]</span> Micikevicius et al. "Mixed Precision Training." ICLR 2018. https://arxiv.org/abs/1710.03740
+
+<span id="ref-6">[6]</span> Micikevicius et al. "FP8 Formats for Deep Learning." arXiv:2209.05433, 2022. https://arxiv.org/abs/2209.05433
+
+<span id="ref-7">[7]</span> OCP. "Microscaling Formats (MX) Specification v1.0." 2023. https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf
+
+<span id="ref-8">[8]</span> Castro et al. "Quartet: Native FP4 Training Can Be Optimal for Large Language Models." NeurIPS 2025. https://arxiv.org/abs/2505.14669
+
+<span id="ref-9">[9]</span> Frantar et al. "GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers." ICLR 2023. https://arxiv.org/abs/2210.17323
+
+<span id="ref-10">[10]</span> Lin et al. "AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration." MLSys 2024. https://arxiv.org/abs/2306.00978
