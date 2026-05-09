@@ -172,12 +172,14 @@ img { max-width: 100%; height: auto; }
 .post-content { font-size: 1rem; }
 
 .post-content .lead {
-  font-size: 1.2em;
+  font-size: 1.1em;
   color: var(--color-text-secondary);
-  line-height: 1.9;
-  margin-bottom: 2rem;
-  padding-bottom: 1.5rem;
-  border-bottom: 1px solid var(--color-border);
+  line-height: 1.8;
+  margin: 0 0 2.5rem;
+  padding: 20px 24px;
+  background: var(--color-bg-secondary);
+  border-radius: 12px;
+  border: 1px solid var(--color-border);
 }
 
 .post-content h2 {
