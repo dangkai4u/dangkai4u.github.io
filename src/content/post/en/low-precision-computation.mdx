@@ -58,6 +58,12 @@ It is worth noting that FP8 has two sub-formats with different roles: **E4M3** (
 
 Notably, DeepSeek-V3 chose to use E4M3 exclusively, relying on fine-grained scaling to compensate for the reduced dynamic range — a fairly aggressive choice [1].
 
+A related distinction worth clarifying: **FP8 vs MXFP8**. The FP8 formats discussed above (E4M3 / E5M2) are "bare formats" — each value is stored independently as an 8-bit float, and scaling granularity, format, and storage are entirely up to the framework. DeepSeek-V3's block-wise / tile-wise scaling is an example of this approach.
+
+**MXFP8** is part of the OCP (Open Compute Project) Microscaling standard, belonging to the MX family. It bakes block-level scaling directly into the format specification: every 32 elements share a single E8M0 scale (8 exponent bits, no mantissa — can only represent powers of 2). Dequantization requires only bit-shift operations, making hardware implementation straightforward. However, the effective per-parameter cost rises to 8.25 bits (8 + 8/32), and the fixed block size of 32 offers less flexibility than custom scaling.
+
+In short: standard FP8 leaves scaling to the user (flexible but requires engineering effort), while MXFP8 standardizes scaling into the format (simplifies interoperability but fixes granularity). The MXFP4 format discussed in Section 3.3 belongs to the same MX family.
+
 ### 2.2 FP vs INT: Two Quantization Paths
 
 Two technical routes exist in quantization: floating-point (FP) and integer (INT). Their core difference lies in how values are distributed:

@@ -58,6 +58,12 @@ Scaling Law 仍在延续，模型参数量从百亿到千亿再到万亿，训�
 
 不过 DeepSeek-V3 全部使用 E4M3，靠细粒度 scaling 补偿动态范围不足，是个比较激进的选择 [1]。
 
+还有一个容易混淆的概念：**FP8 和 MXFP8**。上面讨论的 FP8（E4M3 / E5M2）是"裸格式"——每个值独立存储为 8-bit 浮点数，scaling 的粒度、格式、存储方式全部由框架自行决定。DeepSeek-V3 的 block-wise / tile-wise scaling 就是这种模式。
+
+**MXFP8** 是 OCP（Open Compute Project）提出的 Microscaling 标准，属于 MX 系列。它把 block-level scaling 直接内建到了格式规范中：每 32 个元素共享一个 E8M0 格式的 scale（8 位纯指数，无尾数，只能表示 2 的幂次）。反量化只需位移操作，硬件实现简单；但每参数实际开销为 8.25 bits（8 + 8/32），且 block 大小固定为 32，灵活性不如自定义 scaling。
+
+简单说：标准 FP8 把 scaling 留给用户（灵活但需要工程投入），MXFP8 把 scaling 标准化到格式中（简化互操作但粒度固定）。后面 3.3 节讨论的 MXFP4 属于同一个 MX 系列。
+
 ### 2.2 FP vs INT：两条量化路线
 
 量化领域存在两条技术路线：浮点（FP）和整数（INT）。它们的核心区别在于数值的分布方式：
