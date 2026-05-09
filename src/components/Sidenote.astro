@@ -3,12 +3,32 @@ interface Props {
   label?: string;
 }
 
-const { label = '*' } = Astro.props;
+const { label } = Astro.props;
 ---
 
-<span class="sidenote-anchor">
-  <sup class="sidenote-mark">{label}</sup>
-  <span class="sidenote">
+<span class="annotation">
+  <span class="annotation-trigger">{label || ''}</span>
+  <span class="annotation-bubble">
     <slot />
   </span>
 </span>
+
+<script>
+  document.querySelectorAll('.annotation-trigger').forEach(trigger => {
+    trigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const annotation = trigger.closest('.annotation')!;
+      const wasActive = annotation.classList.contains('active');
+      // Close all others
+      document.querySelectorAll('.annotation.active').forEach(a => a.classList.remove('active'));
+      if (!wasActive) annotation.classList.add('active');
+    });
+  });
+  // Click outside to close
+  document.addEventListener('click', () => {
+    document.querySelectorAll('.annotation.active').forEach(a => a.classList.remove('active'));
+  });
+  document.querySelectorAll('.annotation-bubble').forEach(bubble => {
+    bubble.addEventListener('click', (e) => e.stopPropagation());
+  });
+</script>
