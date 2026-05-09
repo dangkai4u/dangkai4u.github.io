@@ -78,14 +78,11 @@ So what is INT's value? **Hardware cost.** An FP8 FMA (fused multiply-add) unit 
 
 Low-precision formats have limited representable values. To make these limited values faithfully reproduce the high-precision value distribution, scaling maps data into the format's effective representation range. Taking FP8 E4M3 as an example:
 
-```
-BF16 representable range: [-3.4×10³⁸, 3.4×10³⁸], 65536 values
-FP8 E4M3 representable range: [-448, 448], 256 values
-
-Problem: BF16 has 8 exponent + 7 mantissa bits; FP8 E4M3 has only 4 + 3.
-Directly truncating BF16 to FP8 loses mantissa precision (7→3 bits),
-and the exponent reduction (8→4 bits) may cause overflow or underflow.
-```
+> **BF16**: range [-3.4×10³⁸, 3.4×10³⁸], 8 exponent + 7 mantissa bits, 65536 representable values
+>
+> **FP8 E4M3**: range [-448, 448], 4 exponent + 3 mantissa bits, 256 representable values
+>
+> Direct truncation: mantissa 7→3 bits loses precision, exponent 8→4 bits may cause overflow or underflow.
 
 Scaling maps the original value distribution into the low-precision format's effective representation space, making full use of its limited capacity. The implementation is straightforward: compute the maximum absolute value `amax` of a data group, then `scale = FP8_MAX / amax`, multiply all values by scale before converting to FP8; dequantization simply divides by scale. This way, FP8's limited 256 representable values concentrate on the actual data range, maximizing quantization precision.
 
@@ -164,12 +161,9 @@ Accumulation error can be addressed with high-precision accumulators, but FP4 tr
 
 Consider the value 0.2 — the two nearest FP4 representable values are 0 and 0.5. Deterministic rounding (Round-to-Nearest) always rounds it to 0, permanently losing information. If gradient updates across many parameters suffer this systematic truncation, training cannot converge.
 
-```
-Value 0.2 between FP4 representable values {0, 0.5}:
-  Round-to-Nearest: always rounds to 0  → persistent information loss
-  Stochastic Rounding: 40% probability → 0.5, 60% probability → 0
-                       E[SR(0.2)] = 0.2  ✓ unbiased
-```
+> Value 0.2 between FP4 representable values {'{'}0, 0.5{'}'}:
+> - **Round-to-Nearest**: always rounds to 0 → persistent information loss
+> - **Stochastic Rounding**: 40% probability → 0.5, 60% probability → 0. Expected value E[SR(0.2)] = 0.2 ✓ unbiased
 
 Stochastic Rounding rounds probabilistically, guaranteeing that the expected value equals the original (unbiased estimation). Individual rounds are noisy, but over many iterations the parameter update direction remains correct. With FP4's mere 16 representable values, this unbiasedness is virtually a prerequisite for training convergence. Quartet, NVFP4, and other FP4 training schemes all adopt this strategy.
 
@@ -183,7 +177,7 @@ Not all modules need equal precision. Different Transformer modules vary signifi
 | Attention QKV | High | FP8+ | Small errors alter attention distribution, affecting semantic focus |
 | Attention Score | High | BF16 | Softmax is highly sensitive to inputs; low precision causes attention collapse |
 | FFN / MLP | Low | FP4/INT4 | 60-80% of parameters, high error tolerance, maximum compression benefit |
-| KV Cache | High | BF16 | FP8 introduces some precision loss, affecting long-text generation quality |
+| KV Cache | Medium-High | FP8/BF16 | FP8 KV Cache is viable in practice; BF16 still recommended for long-context scenarios |
 | LayerNorm | High | FP32 | Very few parameters (a few KB); high precision at no extra cost |
 | MoE Experts | Low | FP4/INT4 | 90%+ of total parameters, only a few activated per inference |
 
@@ -193,7 +187,14 @@ Not all modules need equal precision. Different Transformer modules vary signifi
 
 The preceding methods reduce error at the computation level. QAT takes a different approach from the training perspective: letting the model "see" quantized weights during training, proactively adapting to precision degradation.
 
-DeepSeek-V4 applies FP4 (MXFP4) QAT to MoE Expert weights, with a clever core design: **FP4→FP8 dequantization is lossless** [2]. FP8 E4M3 has 2 more exponent bits than FP4 E2M1, providing greater dynamic range. As long as the scale factor ratio across FP4 sub-blocks within the same FP8 quantization block stays below a certain threshold, the fine-grained FP4 scale information can be fully absorbed by FP8's larger dynamic range.
+DeepSeek-V4 applies FP4 (MXFP4) QAT to MoE Expert weights, with a clever core design: **FP4→FP8 dequantization is lossless** [2]. This holds because neither step introduces rounding:
+
+- **Type conversion is exact**: Every representable value in FP4 E2M1 (2 exponent + 1 mantissa bits) can be exactly represented in FP8 E4M3 (4 exponent + 3 mantissa bits). FP8 strictly contains FP4 in both exponent and mantissa dimensions, so the FP4→FP8 cast requires no rounding.
+- **Scale application is exact**: MXFP4 scales use E8M0 format — pure powers of 2 (e.g., 2⁰, 2¹, 2⁻¹ ...). Multiplying a floating-point number by 2ⁿ only shifts the exponent field without touching the mantissa, producing no rounding error.
+
+Since both steps are exact, the entire FP4→FP8 dequantization is strictly lossless.
+
+<Figure src="/svg/fp4-to-fp8-lossless.svg" caption="Lossless FP4→FP8 dequantization: exact type cast + exact scale bit-shift" width="680px" />
 
 This means the entire QAT pipeline can directly reuse the existing FP8 training framework with no modifications to the backward pass.
 
@@ -210,9 +211,9 @@ Simulated quantization during training preserves gradient signal integrity, whil
 | Scenario | Recommended Format | Hardware Requirement | Quality Loss |
 |----------|-------------------|---------------------|-------------|
 | Training (default) | BF16 | Ampere+ | None |
-| Training (efficient) | FP8 | Hopper+ | Minimal, near-lossless |
+| Training (efficient) | FP8 / MXFP8 | Hopper+ (MXFP8 native on Blackwell) | Minimal, near-lossless |
 | Training (aggressive) | FP4 | Blackwell | Requires QAT |
-| Inference (near-lossless) | FP8 | Hopper+ | Negligible |
+| Inference (near-lossless) | FP8 / MXFP8 | Hopper+ (MXFP8 native on Blackwell) | Negligible |
 | Inference (memory-saving) | INT4 AWQ/GPTQ | Universal | Slight degradation |
 | Inference (max throughput) | NVFP4 / MXFP4 | Blackwell | Requires QAT |
 
