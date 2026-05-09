@@ -1,0 +1,46 @@
+---
+interface Props {
+  lang?: 'zh-cn' | 'en';
+}
+
+const { lang = 'zh-cn' } = Astro.props;
+const currentPath = Astro.url.pathname;
+
+const menus: Record<string, { label: string; href: string }[]> = {
+  'zh-cn': [
+    { label: '首页', href: '/' },
+    { label: '关于', href: '/about/' },
+  ],
+  'en': [
+    { label: 'Home', href: '/en/' },
+    { label: 'About', href: '/en/about/' },
+  ],
+};
+
+const items = menus[lang] || menus['zh-cn'];
+
+// Language switch target
+const isEn = lang === 'en';
+const switchLabel = isEn ? '中文' : 'EN';
+const switchHref = isEn
+  ? currentPath.replace(/^\/en\//, '/').replace(/^\/en$/, '/')
+  : '/en' + (currentPath === '/' ? '/' : currentPath);
+---
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="nav-logo" href={lang === 'en' ? '/en/' : '/'}>DK's Blog</a>
+    <ul class="nav-links">
+      {items.map((item) => (
+        <li>
+          <a href={item.href} class:list={[{ active: currentPath === item.href }]}>
+            {item.label}
+          </a>
+        </li>
+      ))}
+      <li>
+        <a class="lang-switch" href={switchHref}>{switchLabel}</a>
+      </li>
+    </ul>
+  </div>
+</nav>

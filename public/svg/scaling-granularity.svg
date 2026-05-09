@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 280" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
+
+  <!-- Tensor-wise -->
+  <g transform="translate(20, 30)">
+    <text x="95" y="0" text-anchor="middle" font-size="12" fill="#37352f" font-weight="600">Tensor-wise</text>
+    <text x="95" y="16" text-anchor="middle" font-size="10" fill="#9b9a97">1 scale / tensor</text>
+    <rect x="10" y="28" width="170" height="130" rx="4" fill="#f7f6f3" stroke="#e9e9e7" stroke-width="1.5"/>
+    <text x="95" y="100" text-anchor="middle" font-size="14" fill="#4a90d9" font-weight="500">scale = s</text>
+    <text x="95" y="180" text-anchor="middle" font-size="10" fill="#9b9a97">Precision: Low</text>
+    <text x="95" y="195" text-anchor="middle" font-size="10" fill="#9b9a97">Overhead: Minimal</text>
+    <rect x="30" y="210" width="130" height="6" rx="3" fill="#e9e9e7"/>
+    <rect x="30" y="210" width="25" height="6" rx="3" fill="#e07c5a"/>
+  </g>
+
+  <!-- Block-wise -->
+  <g transform="translate(255, 30)">
+    <text x="95" y="0" text-anchor="middle" font-size="12" fill="#37352f" font-weight="600">Block-wise</text>
+    <text x="95" y="16" text-anchor="middle" font-size="10" fill="#9b9a97">1 scale / 128×128</text>
+    <rect x="10" y="28" width="170" height="130" rx="4" fill="none" stroke="#e9e9e7" stroke-width="1.5"/>
+    <!-- Grid -->
+    <rect x="14" y="32" width="78" height="60" rx="3" fill="#e7f3fe" stroke="#4a90d9" stroke-width="1" opacity="0.8"/>
+    <text x="53" y="67" text-anchor="middle" font-size="11" fill="#4a90d9">s₁</text>
+    <rect x="98" y="32" width="78" height="60" rx="3" fill="#fef3cd" stroke="#e0a800" stroke-width="1" opacity="0.8"/>
+    <text x="137" y="67" text-anchor="middle" font-size="11" fill="#c49000">s₂</text>
+    <rect x="14" y="96" width="78" height="58" rx="3" fill="#d4edda" stroke="#6ab04c" stroke-width="1" opacity="0.8"/>
+    <text x="53" y="130" text-anchor="middle" font-size="11" fill="#5a9e42">s₃</text>
+    <rect x="98" y="96" width="78" height="58" rx="3" fill="#e8deee" stroke="#9b59b6" stroke-width="1" opacity="0.8"/>
+    <text x="137" y="130" text-anchor="middle" font-size="11" fill="#8e44ad">s₄</text>
+    <text x="95" y="180" text-anchor="middle" font-size="10" fill="#9b9a97">Precision: Medium</text>
+    <text x="95" y="195" text-anchor="middle" font-size="10" fill="#9b9a97">Overhead: Moderate</text>
+    <rect x="30" y="210" width="130" height="6" rx="3" fill="#e9e9e7"/>
+    <rect x="30" y="210" width="70" height="6" rx="3" fill="#f0c040"/>
+  </g>
+
+  <!-- Tile-wise -->
+  <g transform="translate(490, 30)">
+    <text x="95" y="0" text-anchor="middle" font-size="12" fill="#37352f" font-weight="600">Tile-wise</text>
+    <text x="95" y="16" text-anchor="middle" font-size="10" fill="#9b9a97">1 scale / 1×128</text>
+    <rect x="10" y="28" width="170" height="130" rx="4" fill="none" stroke="#e9e9e7" stroke-width="1.5"/>
+    <!-- Rows -->
+    <rect x="14" y="32" width="162" height="22" rx="2" fill="#e7f3fe" stroke="#4a90d9" stroke-width="0.8"/>
+    <text x="30" y="47" font-size="9" fill="#4a90d9" font-weight="500">s₁</text>
+    <text x="82" y="47" font-size="9" fill="#4a90d9" font-weight="500">s₂</text>
+    <text x="134" y="47" font-size="9" fill="#4a90d9" font-weight="500">s₃</text>
+    <line x1="62" y1="34" x2="62" y2="52" stroke="#4a90d9" stroke-width="0.5" stroke-dasharray="2,2"/>
+    <line x1="114" y1="34" x2="114" y2="52" stroke="#4a90d9" stroke-width="0.5" stroke-dasharray="2,2"/>
+
+    <rect x="14" y="58" width="162" height="22" rx="2" fill="#fef3cd" stroke="#e0a800" stroke-width="0.8"/>
+    <text x="30" y="73" font-size="9" fill="#c49000" font-weight="500">s₄</text>
+    <text x="82" y="73" font-size="9" fill="#c49000" font-weight="500">s₅</text>
+    <text x="134" y="73" font-size="9" fill="#c49000" font-weight="500">s₆</text>
+    <line x1="62" y1="60" x2="62" y2="78" stroke="#e0a800" stroke-width="0.5" stroke-dasharray="2,2"/>
+    <line x1="114" y1="60" x2="114" y2="78" stroke="#e0a800" stroke-width="0.5" stroke-dasharray="2,2"/>
+
+    <rect x="14" y="84" width="162" height="22" rx="2" fill="#d4edda" stroke="#6ab04c" stroke-width="0.8"/>
+    <text x="30" y="99" font-size="9" fill="#5a9e42" font-weight="500">s₇</text>
+    <text x="82" y="99" font-size="9" fill="#5a9e42" font-weight="500">s₈</text>
+    <text x="134" y="99" font-size="9" fill="#5a9e42" font-weight="500">s₉</text>
+    <line x1="62" y1="86" x2="62" y2="104" stroke="#6ab04c" stroke-width="0.5" stroke-dasharray="2,2"/>
+    <line x1="114" y1="86" x2="114" y2="104" stroke="#6ab04c" stroke-width="0.5" stroke-dasharray="2,2"/>
+
+    <rect x="14" y="110" width="162" height="22" rx="2" fill="#e8deee" stroke="#9b59b6" stroke-width="0.8"/>
+    <text x="30" y="125" font-size="9" fill="#8e44ad" font-weight="500">s₁₀</text>
+    <text x="82" y="125" font-size="9" fill="#8e44ad" font-weight="500">s₁₁</text>
+    <text x="134" y="125" font-size="9" fill="#8e44ad" font-weight="500">s₁₂</text>
+    <line x1="62" y1="112" x2="62" y2="130" stroke="#9b59b6" stroke-width="0.5" stroke-dasharray="2,2"/>
+    <line x1="114" y1="112" x2="114" y2="130" stroke="#9b59b6" stroke-width="0.5" stroke-dasharray="2,2"/>
+
+    <text x="95" y="180" text-anchor="middle" font-size="10" fill="#9b9a97">Precision: High</text>
+    <text x="95" y="195" text-anchor="middle" font-size="10" fill="#9b9a97">Overhead: Higher</text>
+    <rect x="30" y="210" width="130" height="6" rx="3" fill="#e9e9e7"/>
+    <rect x="30" y="210" width="120" height="6" rx="3" fill="#6ab04c"/>
+  </g>
+
+  <!-- Precision bars legend -->
+  <text x="360" y="270" text-anchor="middle" font-size="9" fill="#9b9a97">← lower precision　　　　precision bar　　　　higher precision →</text>
+</svg>

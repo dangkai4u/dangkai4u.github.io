@@ -1,0 +1,46 @@
+---
+interface Props {
+  title: string;
+  description?: string;
+  lang?: 'zh-cn' | 'en';
+  mathjax?: boolean;
+}
+
+const { title, description = '', lang = 'zh-cn', mathjax = false } = Astro.props;
+const htmlLang = lang === 'zh-cn' ? 'zh-CN' : 'en';
+
+import Nav from '@/components/Nav.astro';
+import '@/styles/global.css';
+---
+
+<!doctype html>
+<html lang={htmlLang}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title} - DK's Blog</title>
+    {description && <meta name="description" content={description} />}
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="generator" content={Astro.generator} />
+    {mathjax && (
+      <script
+        id="MathJax-script"
+        async
+        src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"
+      ></script>
+    )}
+  </head>
+  <body>
+    <Nav lang={lang} />
+    <main class="main">
+      <slot />
+    </main>
+    <footer class="footer">
+      <div class="footer-links">
+        <a href="https://github.com/dangkai4u" target="_blank" rel="noopener">GitHub</a>
+        <a href="mailto:dangkai4u@outlook.com">Email</a>
+      </div>
+      <div>&copy; 2026 dangkai.dk</div>
+    </footer>
+  </body>
+</html>

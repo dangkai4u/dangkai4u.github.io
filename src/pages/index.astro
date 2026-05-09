@@ -1,0 +1,28 @@
+---
+import { getCollection } from 'astro:content';
+import BaseLayout from '@/layouts/BaseLayout.astro';
+
+const allPosts = await getCollection('post', ({ id, data }) =>
+  id.startsWith('zh-cn/') && !data.draft
+);
+const posts = allPosts.sort((a, b) => b.data.date.getTime() - a.data.date.getTime());
+---
+
+<BaseLayout title="首页" description="技术、感想与 AI 工具分享" lang="zh-cn">
+  <ul class="post-list">
+    {posts.map((post) => (
+      <li class="post-item">
+        <a class="post-item-title" href={`/post/${post.id.replace('zh-cn/', '')}/`}>{post.data.title}</a>
+        <div class="post-item-meta">
+          <time datetime={post.data.date.toISOString().slice(0, 10)}>
+            {post.data.date.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })}
+          </time>
+        </div>
+        {post.data.description && <p class="post-item-desc">{post.data.description}</p>}
+        <div class="post-tags">
+          {post.data.tags?.map((tag) => <span class="tag">{tag}</span>)}
+        </div>
+      </li>
+    ))}
+  </ul>
+</BaseLayout>

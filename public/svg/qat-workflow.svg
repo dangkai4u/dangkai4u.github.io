@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 200" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
+
+  <!-- Title -->
+  <text x="350" y="18" text-anchor="middle" font-size="13" fill="#37352f" font-weight="600">Quantization-Aware Training Workflow</text>
+
+  <!-- ===== Training Path ===== -->
+  <text x="30" y="55" font-size="11" fill="#4a90d9" font-weight="600">Training</text>
+  <text x="30" y="68" font-size="9" fill="#9b9a97">(simulated quantization)</text>
+
+  <!-- FP32 Master Weights -->
+  <rect x="120" y="42" width="100" height="32" rx="4" fill="#e7f3fe" stroke="#4a90d9" stroke-width="1.2"/>
+  <text x="170" y="62" text-anchor="middle" font-size="9" fill="#4a90d9" font-weight="500">FP32 master</text>
+
+  <!-- Arrow -->
+  <line x1="220" y1="58" x2="250" y2="58" stroke="#9b9a97" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+
+  <!-- Quantize to FP4 -->
+  <rect x="258" y="42" width="80" height="32" rx="4" fill="#fef3cd" stroke="#e0a800" stroke-width="1.2"/>
+  <text x="298" y="55" text-anchor="middle" font-size="9" fill="#c49000" font-weight="500">quantize</text>
+  <text x="298" y="67" text-anchor="middle" font-size="9" fill="#c49000">→ FP4</text>
+
+  <!-- Arrow -->
+  <line x1="338" y1="58" x2="368" y2="58" stroke="#9b9a97" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+
+  <!-- Dequantize to FP8 -->
+  <rect x="376" y="42" width="88" height="32" rx="4" fill="#d4edda" stroke="#6ab04c" stroke-width="1.2"/>
+  <text x="420" y="55" text-anchor="middle" font-size="9" fill="#5a9e42" font-weight="500">dequantize</text>
+  <text x="420" y="67" text-anchor="middle" font-size="8" fill="#5a9e42">→ FP8 (lossless)</text>
+
+  <!-- Arrow -->
+  <line x1="464" y1="58" x2="494" y2="58" stroke="#9b9a97" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+
+  <!-- Forward -->
+  <rect x="502" y="42" width="80" height="32" rx="4" fill="#e8deee" stroke="#9b59b6" stroke-width="1.2"/>
+  <text x="542" y="62" text-anchor="middle" font-size="9" fill="#8e44ad" font-weight="500">forward pass</text>
+
+  <!-- STE gradient arrow back -->
+  <path d="M 502,80 L 502,95 L 170,95 L 170,74" fill="none" stroke="#e07c5a" stroke-width="1.2" stroke-dasharray="5,3" marker-end="url(#arrowhead-orange)"/>
+  <text x="340" y="108" text-anchor="middle" font-size="9" fill="#e07c5a">gradients via STE → update FP32 master weights</text>
+
+  <!-- ===== Inference Path ===== -->
+  <text x="30" y="150" font-size="11" fill="#6ab04c" font-weight="600">Inference</text>
+  <text x="30" y="163" font-size="9" fill="#9b9a97">(real quantization)</text>
+
+  <!-- FP4 weights -->
+  <rect x="120" y="140" width="100" height="32" rx="4" fill="#fef3cd" stroke="#e0a800" stroke-width="1.2"/>
+  <text x="170" y="160" text-anchor="middle" font-size="9" fill="#c49000" font-weight="500">native FP4 weights</text>
+
+  <!-- Arrow -->
+  <line x1="220" y1="156" x2="280" y2="156" stroke="#9b9a97" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+
+  <!-- Direct computation -->
+  <rect x="288" y="140" width="110" height="32" rx="4" fill="#d4edda" stroke="#6ab04c" stroke-width="1.2"/>
+  <text x="343" y="160" text-anchor="middle" font-size="9" fill="#5a9e42" font-weight="500">direct computation</text>
+
+  <!-- Arrow -->
+  <line x1="398" y1="156" x2="440" y2="156" stroke="#9b9a97" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+
+  <!-- Benefits -->
+  <text x="450" y="150" font-size="9" fill="#37352f">⚡ real speedup</text>
+  <text x="450" y="165" font-size="9" fill="#37352f">💾 memory savings</text>
+
+  <!-- Arrowhead markers -->
+  <defs>
+    <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#9b9a97"/>
+    </marker>
+    <marker id="arrowhead-orange" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#e07c5a"/>
+    </marker>
+  </defs>
+</svg>

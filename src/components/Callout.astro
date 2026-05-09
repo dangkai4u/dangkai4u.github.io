@@ -1,0 +1,15 @@
+---
+interface Props {
+  color?: 'blue' | 'yellow' | 'green' | 'red' | 'gray' | 'purple';
+  icon?: string;
+}
+
+const { color = 'gray', icon = '💡' } = Astro.props;
+---
+
+<div class={`callout callout--${color}`}>
+  <span class="callout-icon">{icon}</span>
+  <div class="callout-content">
+    <slot />
+  </div>
+</div>

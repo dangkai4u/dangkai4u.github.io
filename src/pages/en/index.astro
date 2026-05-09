@@ -1,0 +1,28 @@
+---
+import { getCollection } from 'astro:content';
+import BaseLayout from '@/layouts/BaseLayout.astro';
+
+const allPosts = await getCollection('post', ({ id, data }) =>
+  id.startsWith('en/') && !data.draft
+);
+const posts = allPosts.sort((a, b) => b.data.date.getTime() - a.data.date.getTime());
+---
+
+<BaseLayout title="Home" description="Tech, thoughts, and AI tools" lang="en">
+  <ul class="post-list">
+    {posts.map((post) => (
+      <li class="post-item">
+        <a class="post-item-title" href={`/en/post/${post.id.replace('en/', '')}/`}>{post.data.title}</a>
+        <div class="post-item-meta">
+          <time datetime={post.data.date.toISOString().slice(0, 10)}>
+            {post.data.date.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
+          </time>
+        </div>
+        {post.data.description && <p class="post-item-desc">{post.data.description}</p>}
+        <div class="post-tags">
+          {post.data.tags?.map((tag) => <span class="tag">{tag}</span>)}
+        </div>
+      </li>
+    ))}
+  </ul>
+</BaseLayout>

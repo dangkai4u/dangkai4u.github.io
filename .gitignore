@@ -1,6 +1,9 @@
-# Hugo build output
-public/
-resources/_gen/
+# Astro
+dist/
+.astro/
+
+# Dependencies
+node_modules/
 
 # OS files
 .DS_Store
@@ -12,6 +15,3 @@ Thumbs.db
 *~
 .idea/
 .vscode/
-
-# Hugo
-.hugo_build.lock

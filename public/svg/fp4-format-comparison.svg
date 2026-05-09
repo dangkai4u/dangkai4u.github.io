@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 340" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
+
+  <!-- NVFP4 Section -->
+  <text x="170" y="20" text-anchor="middle" font-size="13" fill="#4a90d9" font-weight="600">NVFP4 (NVIDIA)</text>
+  <text x="170" y="36" text-anchor="middle" font-size="10" fill="#9b9a97">Two-level scaling, block size = 16</text>
+
+  <!-- Data layer -->
+  <rect x="30" y="50" width="280" height="36" rx="4" fill="#e7f3fe" stroke="#4a90d9" stroke-width="1.2"/>
+  <text x="170" y="63" text-anchor="middle" font-size="9" fill="#4a90d9" font-weight="500">16 × E2M1 values</text>
+  <text x="170" y="77" text-anchor="middle" font-size="9" fill="#4a90d9">v₁ v₂ v₃ v₄ ... v₁₅ v₁₆</text>
+
+  <!-- Arrow down -->
+  <line x1="170" y1="86" x2="170" y2="105" stroke="#9b9a97" stroke-width="1.2"/>
+  <polygon points="165,102 170,112 175,102" fill="#9b9a97"/>
+
+  <!-- Block scale -->
+  <rect x="100" y="114" width="140" height="30" rx="4" fill="#fef3cd" stroke="#e0a800" stroke-width="1.2"/>
+  <text x="170" y="134" text-anchor="middle" font-size="10" fill="#c49000" font-weight="500">s_block (E4M3, 8-bit)</text>
+
+  <!-- Arrow down -->
+  <line x1="170" y1="144" x2="170" y2="163" stroke="#9b9a97" stroke-width="1.2"/>
+  <polygon points="165,160 170,170 175,160" fill="#9b9a97"/>
+
+  <!-- Tensor scale -->
+  <rect x="100" y="172" width="140" height="30" rx="4" fill="#d4edda" stroke="#6ab04c" stroke-width="1.2"/>
+  <text x="170" y="192" text-anchor="middle" font-size="10" fill="#5a9e42" font-weight="500">s_tensor (FP32)</text>
+
+  <!-- Cost annotation -->
+  <text x="170" y="222" text-anchor="middle" font-size="10" fill="#9b9a97">~4.5 bits / parameter</text>
+
+  <!-- Divider -->
+  <line x1="340" y1="20" x2="340" y2="230" stroke="#e9e9e7" stroke-width="1" stroke-dasharray="4,4"/>
+
+  <!-- MXFP4 Section -->
+  <text x="510" y="20" text-anchor="middle" font-size="13" fill="#6ab04c" font-weight="600">MXFP4 (OCP)</text>
+  <text x="510" y="36" text-anchor="middle" font-size="10" fill="#9b9a97">Single-level scaling, block size = 32</text>
+
+  <!-- Data layer -->
+  <rect x="370" y="50" width="280" height="36" rx="4" fill="#d4edda" stroke="#6ab04c" stroke-width="1.2"/>
+  <text x="510" y="63" text-anchor="middle" font-size="9" fill="#5a9e42" font-weight="500">32 × E2M1 values</text>
+  <text x="510" y="77" text-anchor="middle" font-size="9" fill="#5a9e42">v₁ v₂ v₃ v₄ ... v₃₁ v₃₂</text>
+
+  <!-- Arrow down -->
+  <line x1="510" y1="86" x2="510" y2="105" stroke="#9b9a97" stroke-width="1.2"/>
+  <polygon points="505,102 510,112 515,102" fill="#9b9a97"/>
+
+  <!-- Block scale -->
+  <rect x="420" y="114" width="180" height="30" rx="4" fill="#fef3cd" stroke="#e0a800" stroke-width="1.2"/>
+  <text x="510" y="134" text-anchor="middle" font-size="10" fill="#c49000" font-weight="500">s_block (E8M0, power-of-2)</text>
+
+  <!-- Cost annotation -->
+  <text x="510" y="170" text-anchor="middle" font-size="10" fill="#9b9a97">~4.25 bits / parameter</text>
+
+  <!-- Byte packing illustration -->
+  <text x="340" y="260" text-anchor="middle" font-size="12" fill="#37352f" font-weight="600">FP4 Byte Packing</text>
+  <text x="340" y="276" text-anchor="middle" font-size="10" fill="#9b9a97">Two FP4 values packed into 1 byte (8 bits)</text>
+
+  <rect x="140" y="290" width="200" height="36" rx="4" fill="none" stroke="#37352f" stroke-width="1.5"/>
+  <!-- Left half -->
+  <rect x="142" y="292" width="98" height="32" rx="2" fill="#e7f3fe"/>
+  <text x="191" y="313" text-anchor="middle" font-size="10" fill="#4a90d9" font-weight="500">S E E M</text>
+  <text x="191" y="286" text-anchor="middle" font-size="8" fill="#9b9a97">high 4 bits</text>
+  <!-- Right half -->
+  <rect x="242" y="292" width="96" height="32" rx="2" fill="#fef3cd"/>
+  <text x="290" y="313" text-anchor="middle" font-size="10" fill="#c49000" font-weight="500">S E E M</text>
+  <text x="290" y="286" text-anchor="middle" font-size="8" fill="#9b9a97">low 4 bits</text>
+  <!-- Divider line -->
+  <line x1="240" y1="292" x2="240" y2="324" stroke="#37352f" stroke-width="1" stroke-dasharray="2,2"/>
+  <!-- Labels -->
+  <text x="140" y="335" font-size="9" fill="#9b9a97">FP4 value A</text>
+  <text x="296" y="335" font-size="9" fill="#9b9a97">FP4 value B</text>
+
+  <!-- Scale byte -->
+  <rect x="360" y="290" width="60" height="36" rx="4" fill="#d4edda" stroke="#6ab04c" stroke-width="1.2"/>
+  <text x="390" y="312" text-anchor="middle" font-size="9" fill="#5a9e42" font-weight="500">scale</text>
+  <text x="390" y="335" text-anchor="middle" font-size="8" fill="#9b9a97">1 byte</text>
+
+  <text x="435" y="312" font-size="9" fill="#9b9a97">× 1 per block</text>
+</svg>

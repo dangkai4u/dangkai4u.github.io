@@ -1,0 +1,14 @@
+---
+interface Props {
+  title: string;
+}
+
+const { title } = Astro.props;
+---
+
+<details class="toggle">
+  <summary>{title}</summary>
+  <div class="toggle-content">
+    <slot />
+  </div>
+</details>
