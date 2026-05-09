@@ -20,9 +20,9 @@ import Sidenote from '@/components/Sidenote.astro'
 
 Scaling Law 仍在延续，模型参数量从百亿到千亿再到万亿，训练和推理的算力与显存开销急剧增长。GPU 的显存与算力增长远不及模型的膨胀速度，低精度存储和计算成为必然选择。从 BF16 的 2 bytes 到 FP8 的 1 byte 再到 FP4 的 0.5 byte，每降一级，显存和计算量近乎减半。
 
-几个数字可以直观感受这个变化。DeepSeek-V3 的 671B 参数用 BF16 需要超过 1.3TB 显存，至少跨两个节点部署；换成 FP8 后压缩到约 685GB，一台 8×H200 单机即可承载 [1]。GPT-OSS 的 120B 参数通过 MXFP4 量化 MoE 权重，整个模型塞进了单张 80GB GPU [3]。而 DeepSeek-V4-Pro 达到 1.6T 参数，MoE Expert 以 FP4 存储、其余模块 FP8，单台 8×B200 节点即可完成推理 [2]。
+几个数字可以直观感受这个变化。DeepSeek-V3 的 671B 参数用 BF16 需要超过 1.3TB 显存，至少跨两个节点部署；换成 FP8 后压缩到约 685GB，一台 8×H200 单机即可承载 <a href="#ref-1">[1]</a>。GPT-OSS 的 120B 参数通过 MXFP4 量化 MoE 权重，整个模型塞进了单张 80GB GPU <a href="#ref-3">[3]</a>。而 DeepSeek-V4-Pro 达到 1.6T 参数，MoE Expert 以 FP4 存储、其余模块 FP8，单台 8×B200 节点即可完成推理 <a href="#ref-2">[2]</a>。
 
-这些并不只是推理侧的压缩技巧。DeepSeek-V3 的 FP8 是贯穿训练全程的，loss 与 BF16 基线接近 [1]；DeepSeek-V4 通过 Quantization-Aware Training 将 FP4 嵌入训练流程本身，而非事后量化 [2]。低精度已经从推理优化手段演变为训练范式的一部分。
+这些并不只是推理侧的压缩技巧。DeepSeek-V3 的 FP8 是贯穿训练全程的，loss 与 BF16 基线接近 <a href="#ref-1">[1]</a>；DeepSeek-V4 通过 Quantization-Aware Training 将 FP4 嵌入训练流程本身，而非事后量化 <a href="#ref-2">[2]</a>。低精度已经从推理优化手段演变为训练范式的一部分。
 
 质量损失如何控制？下面从数值格式、Scaling 和精度损失缓解三个层面展开。
 
@@ -43,7 +43,7 @@ Scaling Law 仍在延续，模型参数量从百亿到千亿再到万亿，训�
 | FP8 E5M2 | 8 | 1+5+2 | 256 | 57,344 | 1 byte |
 | FP4 E2M1 | 4 | 1+2+1 | 16 | 6 | 0.5 byte |
 
-早期深度学习训练使用 FP32，每个参数 4 bytes，精度绰绰有余但计算和存储开销巨大。2018 年提出的混合精度训练（Mixed Precision Training）[5]，核心思路是：前向和反向传播用 FP16 计算以获得 2 倍吞吐提升，同时维护一份 FP32 的 master weights 用于参数更新，兼顾速度与精度。这一方案迅速成为标准实践。
+早期深度学习训练使用 FP32，每个参数 4 bytes，精度绰绰有余但计算和存储开销巨大。2018 年提出的混合精度训练（Mixed Precision Training）<a href="#ref-5">[5]</a>，核心思路是：前向和反向传播用 FP16 计算以获得 2 倍吞吐提升，同时维护一份 FP32 的 master weights 用于参数更新，兼顾速度与精度。这一方案迅速成为标准实践。
 
 然而 FP16 在大模型训练中暴露出明显的局限性。FP16 只有 5 位指数，动态范围上限为 65,504。当模型规模增大后，梯度中容易出现超出该范围的极端值——上溢直接触发 loss spike，下溢则让梯度归零。
 
@@ -57,7 +57,7 @@ Scaling Law 仍在延续，模型参数量从百亿到千亿再到万亿，训�
 
 值得一提的是 FP8 的两个子格式分工明确：**E4M3**（4 位指数 + 3 位尾数）精度更高，通常用于前向传播中的权重和激活值存储；**E5M2**（5 位指数 + 2 位尾数）动态范围更大（最大值 57,344），更适合梯度——梯度的值域波动比权重大得多。
 
-不过 DeepSeek-V3 全部使用 E4M3，靠细粒度 scaling 补偿动态范围不足，是个比较激进的选择 [1]。
+不过 DeepSeek-V3 全部使用 E4M3，靠细粒度 scaling 补偿动态范围不足，是个比较激进的选择 <a href="#ref-1">[1]</a>。
 
 ### 2.2 FP vs INT：两条量化路线
 
@@ -112,7 +112,7 @@ Scaling 的作用是将原始数值分布映射到低精度格式的有效表示
 
 效率方面，前三种方案的 scale 以 FP32 存储，反量化时需要做 FP32 浮点乘法，这部分开销随 scale 粒度变细而增加——Tile-wise 每 128 个元素就需要一次 FP32 反量化操作，额外计算量最大。MXFP8 虽然粒度最细（32 元素/组），但 E8M0 scale 只能是 2 的幂次，反量化仅需位移操作，比 FP32 乘法高效得多。在 Blackwell 上，MXFP8 的 scale 应用由硬件原生完成，无需额外 CUDA Core 参与，吞吐优势更为明显。
 
-**DeepSeek-V3 的做法**：权重 block-wise 128×128，激活值 tile-wise 1×128，scale 以 FP32 存储。DeepSeek-V3 在 H800（Hopper 架构）上训练，而 MXFP8 的原生硬件加速需要 Blackwell，Hopper 上只能软件模拟，吞吐优势有限；此外 FP32 scale 精度优于 E8M0 的 power-of-2 约束。最终 FP8 训练 loss 与 BF16 基线偏差控制在 0.25% 以内 [1]。
+**DeepSeek-V3 的做法**：权重 block-wise 128×128，激活值 tile-wise 1×128，scale 以 FP32 存储。DeepSeek-V3 在 H800（Hopper 架构）上训练，而 MXFP8 的原生硬件加速需要 Blackwell，Hopper 上只能软件模拟，吞吐优势有限；此外 FP32 scale 精度优于 E8M0 的 power-of-2 约束。最终 FP8 训练 loss 与 BF16 基线偏差控制在 0.25% 以内 <a href="#ref-1">[1]</a>。
 
 ### 3.3 FP4：格式与部署约束
 
@@ -129,7 +129,7 @@ FP4 只有 16 个值，需要更加细粒度的 scaling 策略。当前有两种
 | B200 吞吐 | 基准 | 略高（E8M0 scale 硬件实现更简单） |
 | 生态 | NVIDIA 专有 | AMD/Intel/Meta/... 多厂商 |
 
-NVFP4 用更小的块（16 vs 32）和两层缩放换取了更好的精度，在 GPT-OSS 微调实验中 validation loss 比 MXFP4 低约 2-3% [4]。但 MXFP4 的 E8M0 power-of-2 scale 反量化只需位移操作，硬件实现更简单，吞吐略优；同时作为 OCP 开放标准获得了更广泛的硬件支持。实际选择取决于项目对精度和生态的优先级。另外，"4.25 bits"这个数字也值得留意——FP4 表面上是 4-bit，但加上 scale 的存储开销后，每个参数实际占 4.25-4.5 bits。
+NVFP4 用更小的块（16 vs 32）和两层缩放换取了更好的精度，在 GPT-OSS 微调实验中 validation loss 比 MXFP4 低约 2-3% <a href="#ref-4">[4]</a>。但 MXFP4 的 E8M0 power-of-2 scale 反量化只需位移操作，硬件实现更简单，吞吐略优；同时作为 OCP 开放标准获得了更广泛的硬件支持。实际选择取决于项目对精度和生态的优先级。另外，"4.25 bits"这个数字也值得留意——FP4 表面上是 4-bit，但加上 scale 的存储开销后，每个参数实际占 4.25-4.5 bits。
 
 部署层面还有两个实际约束。首先，4-bit 不是字节对齐的，存储时需要将两个 FP4 值 pack 到一个 byte 中，scale 也要紧凑排列；读取单个 FP4 值需要位移和掩码操作，scale 的对齐也需要专门处理，这给 kernel 实现带来了额外复杂度。其次，FP4 的 Tensor Core 原生支持目前仅限于 NVIDIA Blackwell 架构（B100/B200），在 Hopper 及更早的 GPU 上只能通过软件模拟实现，无法获得真正的吞吐收益——这也是 FP4 尚未像 FP8 那样广泛铺开的主要原因。
 
@@ -148,7 +148,7 @@ NVFP4 用更小的块（16 vs 32）和两层缩放换取了更好的精度，在
 
 矩阵乘法是深度学习中最核心的计算单元。一个 Linear 层的 matmul 涉及数千次乘加累积，单次 FP8 乘法的舍入误差虽然很小，但经过数千次累加后会积累到不可忽视的程度。
 
-DeepSeek-V3 的做法是：Tensor Core 以 FP8 完成乘法获取吞吐优势，部分和则通过 CUDA Core 以 FP32 精度累积来保证结果正确性 [1]。乘法用低精度、累积用高精度，兼顾了速度和精度。
+DeepSeek-V3 的做法是：Tensor Core 以 FP8 完成乘法获取吞吐优势，部分和则通过 CUDA Core 以 FP32 精度累积来保证结果正确性 <a href="#ref-1">[1]</a>。乘法用低精度、累积用高精度，兼顾了速度和精度。
 
 ### 4.2 Stochastic Rounding
 
@@ -176,13 +176,13 @@ Stochastic Rounding 以概率方式舍入，保证期望值等于原值（无偏
 | LayerNorm | 高 | FP32 | 参数极少（几 KB），高精度无额外成本 |
 | MoE Experts | 低 | FP4/INT4 | 占总参数 90%+，每次仅激活少数 |
 
-**为什么 FFN 比 Attention 更耐压缩？** FFN 的参数矩阵主要承担"知识存储"角色，单个参数的微小偏移会被后续的非线性函数和 LayerNorm 平滑。而 Attention 中 $QK^T$ 的点积结果直接送入 Softmax——指数函数会将输入的微小扰动放大。这也解释了为什么 DeepSeek-V4 将 MoE Expert（本质是 FFN）压到 FP4，而 Attention 计算保持 FP8 [2]。
+**为什么 FFN 比 Attention 更耐压缩？** FFN 的参数矩阵主要承担"知识存储"角色，单个参数的微小偏移会被后续的非线性函数和 LayerNorm 平滑。而 Attention 中 $QK^T$ 的点积结果直接送入 Softmax——指数函数会将输入的微小扰动放大。这也解释了为什么 DeepSeek-V4 将 MoE Expert（本质是 FFN）压到 FP4，而 Attention 计算保持 FP8 <a href="#ref-2">[2]</a>。
 
 ### 4.4 Quantization-Aware Training
 
 前面的方法都是在计算层面减少误差。QAT 从训练角度出发：让模型在训练过程中就"见过"量化后的权重，主动学习适应低精度带来的信息损失。
 
-DeepSeek-V4 对 MoE Expert 权重采用 FP4（MXFP4）QAT，其中有一个关键设计：**FP4→FP8 的反量化是无损的** [2]。无损的原因在于两步操作都不引入舍入：
+DeepSeek-V4 对 MoE Expert 权重采用 FP4（MXFP4）QAT，其中有一个关键设计：**FP4→FP8 的反量化是无损的** <a href="#ref-2">[2]</a>。无损的原因在于两步操作都不引入舍入：
 
 - **类型转换无损**：FP4 E2M1（2 位指数 + 1 位尾数）的每一个可表示值，在 FP8 E4M3（4 位指数 + 3 位尾数）中都能被精确表示。FP8 在指数和尾数维度上都严格包含 FP4，FP4→FP8 的转换不需要舍入。
 - **Scale 应用无损**：MXFP4 的 scale 采用 E8M0 格式，只能是 2 的幂次（如 2⁰, 2¹, 2⁻¹ ...）。将浮点数乘以 2ⁿ 只移动指数位，不影响尾数，因此不产生舍入误差。
@@ -218,12 +218,12 @@ FP8 本身的 256 个可表示值远不够精确，细粒度 Scaling、高精度
 
 ## 参考
 
-[1] DeepSeek-AI. "DeepSeek-V3 Technical Report." arXiv:2412.19437, 2024. https://arxiv.org/abs/2412.19437
+<span id="ref-1">[1]</span> DeepSeek-AI. "DeepSeek-V3 Technical Report." arXiv:2412.19437, 2024. https://arxiv.org/abs/2412.19437
 
-[2] DeepSeek-AI. "DeepSeek-V4: Towards Highly Efficient Million-Token Context Intelligence." 2026. https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro/blob/main/DeepSeek_V4.pdf
+<span id="ref-2">[2]</span> DeepSeek-AI. "DeepSeek-V4: Towards Highly Efficient Million-Token Context Intelligence." 2026. https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro/blob/main/DeepSeek_V4.pdf
 
-[3] OpenAI. "Introducing GPT-OSS." 2025. https://openai.com/index/introducing-gpt-oss/
+<span id="ref-3">[3]</span> OpenAI. "Introducing GPT-OSS." 2025. https://openai.com/index/introducing-gpt-oss/
 
-[4] NVIDIA. "Fine-Tuning GPT-OSS for Accuracy and Performance with Quantization Aware Training." NVIDIA Developer Blog, 2025. https://developer.nvidia.com/blog/fine-tuning-gpt-oss-for-accuracy-and-performance-with-quantization-aware-training/
+<span id="ref-4">[4]</span> NVIDIA. "Fine-Tuning GPT-OSS for Accuracy and Performance with Quantization Aware Training." NVIDIA Developer Blog, 2025. https://developer.nvidia.com/blog/fine-tuning-gpt-oss-for-accuracy-and-performance-with-quantization-aware-training/
 
-[5] Micikevicius et al. "Mixed Precision Training." ICLR 2018. https://arxiv.org/abs/1710.03740
+<span id="ref-5">[5]</span> Micikevicius et al. "Mixed Precision Training." ICLR 2018. https://arxiv.org/abs/1710.03740
