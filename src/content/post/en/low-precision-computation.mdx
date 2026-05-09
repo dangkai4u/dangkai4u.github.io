@@ -129,15 +129,9 @@ FP4 has only 16 values, requiring even finer-grained scaling strategies. Two mai
 | B200 throughput | Baseline | Slightly higher (E8M0 scale is simpler in hardware) |
 | Ecosystem | NVIDIA proprietary | AMD/Intel/Meta/... multi-vendor |
 
-NVFP4 uses smaller blocks (16 vs 32) and two-level scaling for better precision. In GPT-OSS fine-tuning experiments, NVFP4's validation loss was about 2-3% lower than MXFP4 [4].
+NVFP4 uses smaller blocks (16 vs 32) and two-level scaling for better precision — in GPT-OSS fine-tuning experiments, NVFP4's validation loss was about 2-3% lower than MXFP4 [4]. However, MXFP4's E8M0 power-of-2 scale only requires bit-shift for dequantization, making it simpler in hardware with slightly better throughput; it also enjoys broader hardware support as an OCP open standard. In practice, the choice depends on precision vs ecosystem priorities. Note the "4.25 bits" figure: FP4 is nominally 4-bit, but with scale storage overhead, each parameter effectively costs 4.25-4.5 bits.
 
-But MXFP4's E8M0 power-of-2 scale only requires bit-shift for dequantization, making it simpler in hardware with slightly better throughput; it also enjoys broader hardware support as an OCP open standard. In practice, the choice depends on precision vs ecosystem priorities.
-
-Also worth noting is the "4.25 bits" figure — FP4 is nominally 4-bit, but with scale storage overhead, each parameter effectively costs 4.25-4.5 bits.
-
-Moreover, 4-bit is not byte-aligned, so two FP4 values must be packed into a single byte, with scales also tightly arranged. Reading a single FP4 value requires bit shifting and masking, and scale alignment needs special handling — this adds complexity to kernel implementation.
-
-On the hardware side, native FP4 Tensor Core support is currently limited to NVIDIA's Blackwell architecture (B100/B200). On Hopper and earlier GPUs, FP4 can only be implemented via software emulation, unable to achieve real throughput gains. This is the primary reason FP4 has not yet seen the widespread adoption of FP8.
+Two practical constraints affect FP4 deployment. First, 4-bit is not byte-aligned: two FP4 values must be packed into a single byte with scales tightly arranged, and reading a single FP4 value requires bit shifting and masking with special scale alignment handling — all adding kernel implementation complexity. Second, native FP4 Tensor Core support is currently limited to NVIDIA's Blackwell architecture (B100/B200); on Hopper and earlier GPUs, FP4 can only run via software emulation without real throughput gains — the primary reason FP4 has not yet seen widespread adoption like FP8.
 
 ---
 
@@ -193,15 +187,11 @@ DeepSeek-V4 applies FP4 (MXFP4) QAT to MoE Expert weights, with a clever core de
 - **Type conversion is exact**: Every representable value in FP4 E2M1 (2 exponent + 1 mantissa bits) can be exactly represented in FP8 E4M3 (4 exponent + 3 mantissa bits). FP8 strictly contains FP4 in both exponent and mantissa dimensions, so the FP4→FP8 cast requires no rounding.
 - **Scale application is exact**: MXFP4 scales use E8M0 format — pure powers of 2 (e.g., 2⁰, 2¹, 2⁻¹ ...). Multiplying a floating-point number by 2ⁿ only shifts the exponent field without touching the mantissa, producing no rounding error.
 
-Since both steps are exact, the entire FP4→FP8 dequantization is strictly lossless.
+Since both steps are exact, the entire FP4→FP8 dequantization is strictly lossless. In the diagram, 1.5 is encoded as <Sidenote label="0 0111 100">**Floating-point encoding**: a float is stored as three fields [S | E | M] and decoded as (−1)^S × 2^(E−bias) × (1 + M/2^m), where bias = 2^(e−1) − 1, e is the number of exponent bits, and m is the number of mantissa bits. In FP8 E4M3, bias = 2³ − 1 = 7 and m = 3. For 0 | 0111 | 100: S=0, E=7, M=4, giving (−1)⁰ × 2^(7−7) × (1 + 4/8) = 1 × 1 × 1.5 = **1.5**. After ×2², the exponent increases by 2: E=9=1001, mantissa unchanged 100, giving 2^(9−7) × 1.5 = 4 × 1.5 = **6.0**.</Sidenote> in FP8 E4M3; after multiplying by scale 2², the exponent increases by 2 while the mantissa stays unchanged, yielding 6.0 — both steps land exactly on the FP8 grid.
 
 <Figure src="/svg/fp4-to-fp8-lossless.svg" caption="Lossless FP4→FP8 dequantization: exact type cast + exact scale bit-shift" width="680px" />
 
-In the diagram, 1.5 is encoded as <Sidenote label="0 0111 100">**Floating-point encoding**: a float is stored as three fields [S | E | M] and decoded as (−1)^S × 2^(E−bias) × (1 + M/2^m), where bias = 2^(e−1) − 1, e is the number of exponent bits, and m is the number of mantissa bits. In FP8 E4M3, bias = 2³ − 1 = 7 and m = 3. For 0 | 0111 | 100: S=0, E=7, M=4, giving (−1)⁰ × 2^(7−7) × (1 + 4/8) = 1 × 1 × 1.5 = **1.5**. After ×2², the exponent increases by 2: E=9=1001, mantissa unchanged 100, giving 2^(9−7) × 1.5 = 4 × 1.5 = **6.0**.</Sidenote> in FP8 E4M3.
-
-This means the entire QAT pipeline can directly reuse the existing FP8 training framework with no modifications to the backward pass.
-
-The concrete workflow:
+This means the entire QAT pipeline can directly reuse the existing FP8 training framework with no modifications to the backward pass. The concrete workflow:
 
 <Figure src="/svg/qat-workflow.svg" caption="QAT training and inference workflow" width="680px" />
 
