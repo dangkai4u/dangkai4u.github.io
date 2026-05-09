@@ -1,111 +1,111 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 650 265" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 650 270" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
 
   <!-- Title -->
   <text x="325" y="20" text-anchor="middle" font-size="13" fill="#9b9a97" font-weight="500">Value Distribution Comparison</text>
 
   <!-- FP8 Section Title -->
   <text x="40" y="50" font-size="13" fill="#4a90d9" font-weight="600">FP8 E4M3</text>
-  <text x="120" y="50" font-size="10" fill="#9b9a97">256 values, logarithmic spacing</text>
+  <text x="40" y="65" font-size="10" fill="#9b9a97">256 values, logarithmic spacing</text>
 
-  <!-- FP8 number line -->
-  <line x1="40" y1="80" x2="620" y2="80" stroke="#e9e9e7" stroke-width="2"/>
-  <line x1="40" y1="80" x2="620" y2="80" stroke="#4a90d9" stroke-width="1.5" opacity="0.3"/>
+  <!-- FP8 number line (y=92) -->
+  <line x1="40" y1="92" x2="620" y2="92" stroke="#e9e9e7" stroke-width="2"/>
+  <line x1="40" y1="92" x2="620" y2="92" stroke="#4a90d9" stroke-width="1.5" opacity="0.3"/>
 
-  <!-- FP8 ticks — dense near zero, sparse at edges -->
+  <!-- FP8 ticks -->
   <g stroke="#4a90d9" stroke-width="1.5">
     <!-- Zero tick (taller) -->
-    <line x1="330" y1="68" x2="330" y2="92"/>
-    <!-- Dense region near zero — right -->
-    <line x1="334" y1="72" x2="334" y2="88"/>
-    <line x1="338" y1="72" x2="338" y2="88"/>
-    <line x1="342" y1="72" x2="342" y2="88"/>
-    <line x1="346" y1="72" x2="346" y2="88"/>
-    <line x1="351" y1="72" x2="351" y2="88"/>
-    <line x1="356" y1="72" x2="356" y2="88"/>
-    <line x1="362" y1="72" x2="362" y2="88"/>
-    <!-- Dense region near zero — left -->
-    <line x1="326" y1="72" x2="326" y2="88"/>
-    <line x1="322" y1="72" x2="322" y2="88"/>
-    <line x1="318" y1="72" x2="318" y2="88"/>
-    <line x1="314" y1="72" x2="314" y2="88"/>
-    <line x1="309" y1="72" x2="309" y2="88"/>
-    <line x1="304" y1="72" x2="304" y2="88"/>
-    <line x1="298" y1="72" x2="298" y2="88"/>
-    <!-- Transition zone — right -->
-    <line x1="370" y1="72" x2="370" y2="88"/>
-    <line x1="380" y1="72" x2="380" y2="88"/>
-    <line x1="393" y1="72" x2="393" y2="88"/>
-    <line x1="408" y1="72" x2="408" y2="88"/>
-    <!-- Transition zone — left -->
-    <line x1="288" y1="72" x2="288" y2="88"/>
-    <line x1="276" y1="72" x2="276" y2="88"/>
-    <line x1="262" y1="72" x2="262" y2="88"/>
-    <!-- Sparse region — right -->
-    <line x1="428" y1="72" x2="428" y2="88"/>
-    <line x1="458" y1="72" x2="458" y2="88"/>
-    <line x1="500" y1="72" x2="500" y2="88"/>
-    <line x1="558" y1="72" x2="558" y2="88"/>
-    <line x1="615" y1="72" x2="615" y2="88"/>
-    <!-- Sparse region — left -->
-    <line x1="240" y1="72" x2="240" y2="88"/>
-    <line x1="210" y1="72" x2="210" y2="88"/>
-    <line x1="168" y1="72" x2="168" y2="88"/>
-    <line x1="110" y1="72" x2="110" y2="88"/>
-    <line x1="48" y1="72" x2="48" y2="88"/>
+    <line x1="330" y1="80" x2="330" y2="104"/>
+    <!-- Dense near zero — right -->
+    <line x1="334" y1="84" x2="334" y2="100"/>
+    <line x1="338" y1="84" x2="338" y2="100"/>
+    <line x1="342" y1="84" x2="342" y2="100"/>
+    <line x1="346" y1="84" x2="346" y2="100"/>
+    <line x1="351" y1="84" x2="351" y2="100"/>
+    <line x1="356" y1="84" x2="356" y2="100"/>
+    <line x1="362" y1="84" x2="362" y2="100"/>
+    <!-- Dense near zero — left -->
+    <line x1="326" y1="84" x2="326" y2="100"/>
+    <line x1="322" y1="84" x2="322" y2="100"/>
+    <line x1="318" y1="84" x2="318" y2="100"/>
+    <line x1="314" y1="84" x2="314" y2="100"/>
+    <line x1="309" y1="84" x2="309" y2="100"/>
+    <line x1="304" y1="84" x2="304" y2="100"/>
+    <line x1="298" y1="84" x2="298" y2="100"/>
+    <!-- Transition — right -->
+    <line x1="370" y1="84" x2="370" y2="100"/>
+    <line x1="380" y1="84" x2="380" y2="100"/>
+    <line x1="393" y1="84" x2="393" y2="100"/>
+    <line x1="408" y1="84" x2="408" y2="100"/>
+    <!-- Transition — left -->
+    <line x1="288" y1="84" x2="288" y2="100"/>
+    <line x1="276" y1="84" x2="276" y2="100"/>
+    <line x1="262" y1="84" x2="262" y2="100"/>
+    <!-- Sparse — right -->
+    <line x1="428" y1="84" x2="428" y2="100"/>
+    <line x1="458" y1="84" x2="458" y2="100"/>
+    <line x1="500" y1="84" x2="500" y2="100"/>
+    <line x1="558" y1="84" x2="558" y2="100"/>
+    <line x1="615" y1="84" x2="615" y2="100"/>
+    <!-- Sparse — left -->
+    <line x1="240" y1="84" x2="240" y2="100"/>
+    <line x1="210" y1="84" x2="210" y2="100"/>
+    <line x1="168" y1="84" x2="168" y2="100"/>
+    <line x1="110" y1="84" x2="110" y2="100"/>
+    <line x1="48" y1="84" x2="48" y2="100"/>
   </g>
 
   <!-- FP8 labels -->
-  <text x="330" y="106" text-anchor="middle" font-size="10" fill="#37352f">0</text>
-  <text x="615" y="106" text-anchor="middle" font-size="10" fill="#37352f">448</text>
-  <text x="48" y="106" text-anchor="middle" font-size="10" fill="#37352f">-448</text>
+  <text x="330" y="118" text-anchor="middle" font-size="10" fill="#37352f">0</text>
+  <text x="615" y="118" text-anchor="middle" font-size="10" fill="#37352f">448</text>
+  <text x="48" y="118" text-anchor="middle" font-size="10" fill="#37352f">-448</text>
 
   <!-- FP8 annotations -->
-  <text x="330" y="120" text-anchor="middle" font-size="9" fill="#4a90d9">dense near zero</text>
-  <path d="M 460,66 C 490,58 540,58 560,66" stroke="#9b9a97" stroke-width="0.8" fill="none" stroke-dasharray="3,2"/>
-  <text x="510" y="58" text-anchor="middle" font-size="9" fill="#9b9a97">sparse at tails</text>
+  <text x="330" y="132" text-anchor="middle" font-size="9" fill="#4a90d9">dense near zero</text>
+  <path d="M 460,78 C 490,70 540,70 560,78" stroke="#9b9a97" stroke-width="0.8" fill="none" stroke-dasharray="3,2"/>
+  <text x="510" y="72" text-anchor="middle" font-size="9" fill="#9b9a97">sparse at tails</text>
 
   <!-- INT8 Section Title -->
-  <text x="40" y="158" font-size="13" fill="#6ab04c" font-weight="600">INT8</text>
-  <text x="80" y="158" font-size="10" fill="#9b9a97">256 values, uniform spacing</text>
+  <text x="40" y="168" font-size="13" fill="#6ab04c" font-weight="600">INT8</text>
+  <text x="40" y="183" font-size="10" fill="#9b9a97">256 values, uniform spacing</text>
 
-  <!-- INT8 number line -->
-  <line x1="40" y1="188" x2="620" y2="188" stroke="#e9e9e7" stroke-width="2"/>
-  <line x1="40" y1="188" x2="620" y2="188" stroke="#6ab04c" stroke-width="1.5" opacity="0.3"/>
+  <!-- INT8 number line (y=210) -->
+  <line x1="40" y1="210" x2="620" y2="210" stroke="#e9e9e7" stroke-width="2"/>
+  <line x1="40" y1="210" x2="620" y2="210" stroke="#6ab04c" stroke-width="1.5" opacity="0.3"/>
 
   <!-- INT8 ticks — uniform spacing -->
   <g stroke="#6ab04c" stroke-width="1.5">
-    <line x1="44" y1="180" x2="44" y2="196"/>
-    <line x1="68" y1="180" x2="68" y2="196"/>
-    <line x1="92" y1="180" x2="92" y2="196"/>
-    <line x1="116" y1="180" x2="116" y2="196"/>
-    <line x1="140" y1="180" x2="140" y2="196"/>
-    <line x1="164" y1="180" x2="164" y2="196"/>
-    <line x1="188" y1="180" x2="188" y2="196"/>
-    <line x1="212" y1="180" x2="212" y2="196"/>
-    <line x1="236" y1="180" x2="236" y2="196"/>
-    <line x1="260" y1="180" x2="260" y2="196"/>
-    <line x1="284" y1="180" x2="284" y2="196"/>
-    <line x1="308" y1="180" x2="308" y2="196"/>
-    <line x1="332" y1="180" x2="332" y2="196"/>
-    <line x1="356" y1="180" x2="356" y2="196"/>
-    <line x1="380" y1="180" x2="380" y2="196"/>
-    <line x1="404" y1="180" x2="404" y2="196"/>
-    <line x1="428" y1="180" x2="428" y2="196"/>
-    <line x1="452" y1="180" x2="452" y2="196"/>
-    <line x1="476" y1="180" x2="476" y2="196"/>
-    <line x1="500" y1="180" x2="500" y2="196"/>
-    <line x1="524" y1="180" x2="524" y2="196"/>
-    <line x1="548" y1="180" x2="548" y2="196"/>
-    <line x1="572" y1="180" x2="572" y2="196"/>
-    <line x1="596" y1="180" x2="596" y2="196"/>
-    <line x1="620" y1="180" x2="620" y2="196"/>
+    <line x1="44" y1="202" x2="44" y2="218"/>
+    <line x1="68" y1="202" x2="68" y2="218"/>
+    <line x1="92" y1="202" x2="92" y2="218"/>
+    <line x1="116" y1="202" x2="116" y2="218"/>
+    <line x1="140" y1="202" x2="140" y2="218"/>
+    <line x1="164" y1="202" x2="164" y2="218"/>
+    <line x1="188" y1="202" x2="188" y2="218"/>
+    <line x1="212" y1="202" x2="212" y2="218"/>
+    <line x1="236" y1="202" x2="236" y2="218"/>
+    <line x1="260" y1="202" x2="260" y2="218"/>
+    <line x1="284" y1="202" x2="284" y2="218"/>
+    <line x1="308" y1="202" x2="308" y2="218"/>
+    <line x1="332" y1="202" x2="332" y2="218"/>
+    <line x1="356" y1="202" x2="356" y2="218"/>
+    <line x1="380" y1="202" x2="380" y2="218"/>
+    <line x1="404" y1="202" x2="404" y2="218"/>
+    <line x1="428" y1="202" x2="428" y2="218"/>
+    <line x1="452" y1="202" x2="452" y2="218"/>
+    <line x1="476" y1="202" x2="476" y2="218"/>
+    <line x1="500" y1="202" x2="500" y2="218"/>
+    <line x1="524" y1="202" x2="524" y2="218"/>
+    <line x1="548" y1="202" x2="548" y2="218"/>
+    <line x1="572" y1="202" x2="572" y2="218"/>
+    <line x1="596" y1="202" x2="596" y2="218"/>
+    <line x1="620" y1="202" x2="620" y2="218"/>
   </g>
 
   <!-- INT8 labels -->
-  <text x="44" y="214" text-anchor="middle" font-size="10" fill="#37352f">-128</text>
-  <text x="332" y="214" text-anchor="middle" font-size="10" fill="#37352f">0</text>
-  <text x="620" y="214" text-anchor="middle" font-size="10" fill="#37352f">127</text>
+  <text x="44" y="234" text-anchor="middle" font-size="10" fill="#37352f">-128</text>
+  <text x="332" y="234" text-anchor="middle" font-size="10" fill="#37352f">0</text>
+  <text x="620" y="234" text-anchor="middle" font-size="10" fill="#37352f">127</text>
 
   <!-- INT8 annotation -->
-  <text x="332" y="230" text-anchor="middle" font-size="9" fill="#6ab04c">uniform spacing everywhere</text>
+  <text x="332" y="252" text-anchor="middle" font-size="9" fill="#6ab04c">uniform spacing everywhere</text>
 </svg>
