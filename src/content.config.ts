@@ -9,6 +9,7 @@ const post = defineCollection({
     lastmod: z.coerce.date().optional(),
     draft: z.boolean().optional().default(false),
     description: z.string().optional(),
+    subtitle: z.string().optional(),
     tags: z.array(z.string()).optional(),
     categories: z.array(z.string()).optional(),
     keywords: z.array(z.string()).optional(),

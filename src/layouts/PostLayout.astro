@@ -6,6 +6,7 @@ interface Props {
     description?: string;
     tags?: string[];
     categories?: string[];
+    subtitle?: string;
     toc?: boolean;
     mathjax?: boolean;
   };
@@ -14,7 +15,7 @@ interface Props {
 }
 
 const { frontmatter, lang = 'zh-cn', headings = [] } = Astro.props;
-const { title, date, description, tags, toc, mathjax } = frontmatter;
+const { title, date, description, tags, subtitle, toc, mathjax } = frontmatter;
 
 import BaseLayout from './BaseLayout.astro';
 
@@ -39,6 +40,7 @@ const showToc = toc && tocTree.length > 0;
   <article>
     <header class="post-header">
       <h1 class="post-title">{title}</h1>
+      {subtitle && <p class="post-subtitle">{subtitle}</p>}
       <div class="post-meta">
         <span class="post-author">Kai Dang</span>
         <span class="post-meta-sep">·</span>
