@@ -167,6 +167,13 @@ img { max-width: 100%; height: auto; }
 .post-meta {
   font-size: 0.9rem;
   color: var(--color-text-lighter);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.post-meta-sep {
+  color: var(--color-text-lighter);
 }
 
 .post-content { font-size: 1rem; }
@@ -188,12 +195,14 @@ img { max-width: 100%; height: auto; }
   margin: 48px 0 16px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--color-border);
+  scroll-margin-top: 24px;
 }
 
 .post-content h3 {
   font-size: 1.2rem;
   font-weight: 600;
   margin: 36px 0 12px;
+  scroll-margin-top: 24px;
 }
 
 .post-content h4 {
@@ -364,6 +373,7 @@ img { max-width: 100%; height: auto; }
   margin: 0 0 40px;
   padding: 20px 24px;
   background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius);
 }
 

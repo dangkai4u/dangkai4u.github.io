@@ -6,13 +6,15 @@ interface Props {
     description?: string;
     tags?: string[];
     categories?: string[];
+    toc?: boolean;
     mathjax?: boolean;
   };
   lang?: 'zh-cn' | 'en';
+  headings?: { depth: number; slug: string; text: string }[];
 }
 
-const { frontmatter, lang = 'zh-cn' } = Astro.props;
-const { title, date, description, tags, mathjax } = frontmatter;
+const { frontmatter, lang = 'zh-cn', headings = [] } = Astro.props;
+const { title, date, description, tags, toc, mathjax } = frontmatter;
 
 import BaseLayout from './BaseLayout.astro';
 
@@ -20,6 +22,17 @@ const formattedDate = new Date(date).toLocaleDateString(
   lang === 'en' ? 'en-US' : 'zh-CN',
   { year: 'numeric', month: 'long', day: 'numeric' }
 );
+
+const tocHeadings = headings.filter(h => h.depth === 2 || h.depth === 3);
+const tocTree: { depth: number; slug: string; text: string; children: { depth: number; slug: string; text: string }[] }[] = [];
+for (const h of tocHeadings) {
+  if (h.depth === 2) {
+    tocTree.push({ ...h, children: [] });
+  } else if (h.depth === 3 && tocTree.length > 0) {
+    tocTree[tocTree.length - 1].children.push(h);
+  }
+}
+const showToc = toc && tocTree.length > 0;
 ---
 
 <BaseLayout title={title} description={description} lang={lang} mathjax={mathjax}>
@@ -27,6 +40,8 @@ const formattedDate = new Date(date).toLocaleDateString(
     <header class="post-header">
       <h1 class="post-title">{title}</h1>
       <div class="post-meta">
+        <span class="post-author">dangkai.dk</span>
+        <span class="post-meta-sep">·</span>
         <time datetime={date}>{formattedDate}</time>
       </div>
       {tags && tags.length > 0 && (
@@ -35,6 +50,25 @@ const formattedDate = new Date(date).toLocaleDateString(
         </div>
       )}
     </header>
+    {showToc && (
+      <nav class="toc">
+        <div class="toc-title">{lang === 'en' ? 'Contents' : '目录'}</div>
+        <ul>
+          {tocTree.map(h2 => (
+            <li>
+              <a href={`#${h2.slug}`}>{h2.text}</a>
+              {h2.children.length > 0 && (
+                <ul>
+                  {h2.children.map(h3 => (
+                    <li><a href={`#${h3.slug}`}>{h3.text}</a></li>
+                  ))}
+                </ul>
+              )}
+            </li>
+          ))}
+        </ul>
+      </nav>
+    )}
     <div class="post-content">
       <slot />
     </div>
