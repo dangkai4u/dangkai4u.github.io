@@ -100,7 +100,7 @@ Anthropic 的 prompt caching <Ref n={5} /> 采用不同路径：每次请求完�
 
 DeepSeek V4 Pro 的设计最好——有 tools 时自动保留，用户无感知。其余模型需要显式开启。
 
-### 2.2 reasoning 中换行 · `</think>` 后换行
+### 2.2 空白规范化（reasoning 中换行 · `</think>` 后换行）
 
 **Chat template 端**。提取 reasoning 和 content 时的 `strip()`/`trim()`/`lstrip()`，以及 re-render 时的固定换行格式，会改变模型原始空白。
 
@@ -125,7 +125,7 @@ DeepSeek V4 Pro 最好——`thinking_template = "{reasoning_content}"` 直接�
 
 这意味着同一模型、同一 chat template，在 vLLM 上可能命中 prefix cache，在 SGLang 上可能不命中——仅因为 reasoning parser 的实现差异。
 
-### 2.3 reasoning 截断 · content 截断
+### 2.3 截断补闭合（reasoning 截断 · content 截断）
 
 当模型因 `max_tokens` 截断时，re-render 会补上模型未生成的闭合标签或 stop token。
 
@@ -135,11 +135,11 @@ DeepSeek V4 Pro 最好——`thinking_template = "{reasoning_content}"` 直接�
 
 截断不可避免，但补闭合的 token 破坏 prefix。Renderers <Ref n={8} /> 的 bridge 在拼接点合成 close token——只追加不重写——是正确路径。
 
-### 2.4 tool_call 截断 · tool_call args 序列化
+### 2.4 tool_call 容错 · tool_call args 序列化
 
 这是最难修复的漂移源。完整 roundtrip：模型输出 → **parser 提取 tool_calls**（格式转换 + JSON 规范化）→ 工具执行 → **chat template 渲染回模型格式**（可能二次编码）。两端都可能有损。
 
-**tool_call 截断。** 截断发生在 JSON/XML 参数中间时，parser 需要容错处理。Kimi K2.6 依赖 `partial_json_parser`，补齐后的 JSON 与原始不同。Qwen3.6 和 GLM-5.1 的 XML 格式更有弹性——已完成的参数块可以独立解析，但仍需补闭合标签。DeepSeek V4 Pro 的 DSML parser 不容错，正则匹配失败直接报错。
+**tool_call 容错。** 截断发生在 JSON/XML 参数中间时，parser 需要容错处理。Kimi K2.6 依赖 `partial_json_parser`，补齐后的 JSON 与原始不同。Qwen3.6 和 GLM-5.1 的 XML 格式更有弹性——已完成的参数块可以独立解析，但仍需补闭合标签。DeepSeek V4 Pro 的 DSML parser 不容错，正则匹配失败直接报错。
 
 **tool_call args 序列化。** 即使参数完整，parser 的 `json.loads` → `json.dumps` 也会改变格式。Qwen3.6 和 GLM-5.1 的模型输出是 XML，parser 转为 JSON——**不可逆**：
 

@@ -229,7 +229,7 @@
     "</think> 后与 content 间换行",
     "reasoning 截断（无 </think>）",
     "content 截断（无 stop token）",
-    "tool_call 截断",
+    "tool_call 容错",
     "tool_call args 序列化"
   ];
 
@@ -328,21 +328,21 @@
         d: `历史中用 <code>&lt;|end|&gt;</code>，训练时最后一条用 <code>&lt;|return|&gt;</code>。截断时多出 token，且存在 stop token 类型变化。`,
         c: `<span class="cm">{# L311: 训练时最后一条 #}</span>\n{{- <span class="str">"...&lt;|message|&gt;"</span> + message.content\n    + <span class="str">"&lt;|return|&gt;"</span> }}\n<span class="cm">{# L314: 历史中 #}</span>\n{{- <span class="str">"...&lt;|message|&gt;"</span> + message.content\n    + <span class="str">"&lt;|end|&gt;"</span> }}`},
     ],
-    // scenario 5: tool_call 截断
+    // scenario 5: tool_call 容错
     [
-      { s: S.C, t: "Qwen3.6 — tool_call 截断",
+      { s: S.C, t: "Qwen3.6 — tool_call 容错",
         d: `XML 格式每个 <code>&lt;parameter&gt;</code> 是独立块——已完成的参数能还原。但 re-render 补上 <code>&lt;/function&gt;\\n&lt;/tool_call&gt;</code> 闭合标签，多出模型未生成的 token。`,
         c: `<span class="cm">{# L119-127: XML 参数格式 #}</span>\n{{- <span class="str">'&lt;parameter='</span> + args_name + <span class="str">'&gt;\\n'</span> }}\n{{- args_value }}\n{{- <span class="str">'\\n&lt;/parameter&gt;\\n'</span> }}\n...\n{{- <span class="str">'&lt;/function&gt;\\n&lt;/tool_call&gt;'</span> }}`},
-      { s: S.C, t: "GLM-5.1 — tool_call 截断",
+      { s: S.C, t: "GLM-5.1 — tool_call 容错",
         d: `XML 格式，已完成的 <code>&lt;arg_key&gt;&lt;arg_value&gt;</code> 块可独立解析。同样需补闭合标签。`,
         c: `&lt;tool_call&gt;get_weather\n  &lt;arg_key&gt;location&lt;/arg_key&gt;\n  &lt;arg_value&gt;Beijing&lt;/arg_value&gt;\n<span class="cm">{# 独立块可解析 #}</span>`},
-      { s: S.F, t: "Kimi K2.6 — tool_call 截断",
+      { s: S.F, t: "Kimi K2.6 — tool_call 容错",
         d: `arguments 是 JSON 字符串——截断时需要 <code>partial_json_parser</code> 容错。容错结果（补齐引号/括号）与原始 JSON 不同。`,
         c: `&lt;|tool_call_argument_begin|&gt;\n  {<span class="str">"location"</span>: <span class="str">"Bei</span>\n<span class="cm">{# 截断 → partial_json_parser 补齐 #}</span>\n<span class="cm">{# {"location": "Bei"} ≠ 原文 #}</span>`},
-      { s: S.F, t: "DeepSeek V4 Pro — tool_call 截断",
+      { s: S.F, t: "DeepSeek V4 Pro — tool_call 容错",
         d: `DSML parser 不容错——参数不完整时正则匹配失败，直接 <code>raise ValueError</code>。`,
         c: `param_kv = re.<span class="fn">findall</span>(\n    <span class="str">r'^ name="(.*?)" string=...'</span>,\n    param_content)\n<span class="kw">if</span> <span class="fn">len</span>(param_kv) != 1:\n    <span class="kw">raise</span> <span class="fn">ValueError</span>(...)`},
-      { s: S.F, t: "GPT-OSS — tool_call 截断",
+      { s: S.F, t: "GPT-OSS — tool_call 容错",
         d: `JSON 格式 + vLLM parser 的 <code>json.loads</code> → <code>json.dumps</code> 规范化——即使完整也可能改变格式，截断时更不可控。`,
         c: `<span class="cm"># vLLM parser 规范化</span>\nargs = json.<span class="fn">loads</span>(raw_args)\nnormalized = json.<span class="fn">dumps</span>(args)\n<span class="cm"># 截断时 json.loads 失败</span>`},
     ],
