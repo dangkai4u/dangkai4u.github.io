@@ -80,40 +80,79 @@ Anthropic 的 prompt caching <Ref n={5} /> 采用不同路径：每次请求完�
 
 ## 2. 五个开源模型的 PRR 分析
 
-我们下载了五个模型仓库的 tokenizer + chat template 文件（不含权重），对每个模型模拟了完整的 parse-render roundtrip 链路。
-
-| 模型 | HuggingFace 仓库 | Chat Template | Tool Call 格式 |
-|------|-----------------|---------------|---------------|
-| Qwen3.6 | `Qwen/Qwen3.6-35B-A3B` | Jinja2 | XML params |
-| GLM-5.1 | `zai-org/GLM-5.1` | Jinja2 | XML tags |
-| Kimi K2.6 | `moonshotai/Kimi-K2.6` | Jinja2 | Special tokens |
-| DeepSeek V4 Pro | `deepseek-ai/DeepSeek-V4-Pro` | Python encoding | DSML |
-| GPT-OSS | `openai/gpt-oss-120b` | Jinja2 + Harmony | Channel-based |
-
-测试对话：system + user 请模型调用 `get_weather(city)` → 模型回复含 thinking + tool call → tool result → 模型最终回答 → 追加下一条 user message。在四个边界检查 text prefix 和 token prefix：
-
-| 边界 | 含义 |
-|------|------|
-| `initial_prompt → assistant_tool_call` | 首轮 prompt 接上模型工具调用 |
-| `assistant_tool_call → tool_result_prompt` | 工具调用接回 tool result |
-| `tool_result_prompt → final_answer` | tool result 接回最终回答 |
-| `final_answer → next_user_prompt` | 最终回答接回下一轮 user |
-
-**结果总览**：
-
-| 模型 | 默认模板 | 保留 reasoning 后 | 主要漂移点 |
-|------|:-------:|:-----------------:|-----------|
-| Qwen3.6 | ❌ | ✅ `preserve_thinking=True` | 历史 `<think>` 被删 |
-| GLM-5.1 | ❌ | ✅ `clear_thinking=False` | 历史 reasoning 被替换 + `strip()` |
-| Kimi K2.6 | ❌ | ✅ `preserve_thinking=True` | history/suffix 分区改写旧 thinking |
-| DeepSeek V4 Pro | ✅ | 不需要额外开关 | 有 tools 时自动保留 thinking |
-| GPT-OSS | ❌ | 需关注 `auto_drop_analysis` | analysis channel 被丢弃 |
-
-核心发现：**默认 `apply_chat_template` 服务于"把历史整理成模型偏好的提示格式"，不服务于"把模型上一轮采样 token 原样接回去"。这两个目标在 reasoning 模型上经常冲突。**
-
-除了默认的 thinking 删除外，还有多种场景会触发漂移。点击下方表格中的单元格查看具体的漂移原因和代码证据：
+我们下载了 Qwen3.6、GLM-5.1、Kimi K2.6、DeepSeek V4 Pro、GPT-OSS 五个模型的 tokenizer 和 chat template（不含权重），对每个模型模拟了完整的 parse-render roundtrip。点击下方矩阵的单元格查看具体漂移原因和代码证据：
 
 <DriftMatrix />
+
+漂移的根因可以归为四类。下面逐一分析 chat template（render 端）和推理引擎 parser（parse 端）的行为。
+
+### 2.1 Thinking 删除
+
+**有开关可修复。** 所有模型的默认 chat template 都会删除或缩减历史 assistant 的 thinking 内容。这个默认值是为了兼容无 tool-use 的对话场景——用户不需要看到上一轮的 CoT。但在 Agent 多轮场景下，删除 thinking 直接导致 prefix 断裂。
+
+各模型的开关和代码位置：
+
+- **Qwen3.6**：`preserve_thinking=True`。默认只保留 `last_query` 之后的 thinking（`chat_template.jinja:L100-103`）。
+- **GLM-5.1**：`clear_thinking=False`。默认把旧 thinking 替换为孤立的 `</think>`（`chat_template.jinja:L75-79`）。
+- **Kimi K2.6**：`preserve_thinking=True`。基于 history/suffix 分区，最后一个非 tool-call assistant 之前的所有 thinking 变为空 `<think></think>`（`chat_template.jinja:L42-54,L67-68`）。
+- **DeepSeek V4 Pro**：自动。检测到 tools 存在时自动禁用 `drop_thinking`，无需手动设置（`encoding_dsv4.py:L549-551`）。
+- **GPT-OSS**：`auto_drop_analysis`。任何 tool-call assistant 的 analysis channel，只要后续存在 non-tool-call assistant 就被删除（`chat_template.jinja:L277-295`）。
+
+DeepSeek V4 Pro 的设计最好——有 tools 时自动保留，用户无感知。其余模型需要显式开启。
+
+### 2.2 空白规范化
+
+**Chat template 端**。提取 reasoning 和 content 时的 `strip()`/`trim()`/`lstrip()`，以及 re-render 时的固定换行格式，会改变模型原始空白。
+
+Qwen3.6 最典型——三重去除 + 固定格式（`chat_template.jinja:L95-101`）：
+
+```jinja
+{%- set reasoning_content = content
+    .split('</think>')[0].rstrip('\n')
+    .split('<think>')[-1].lstrip('\n') %}
+{%- set reasoning_content = reasoning_content|trim %}
+{# re-render 固定 \n<think>\n{rc}\n</think>\n\n #}
+```
+
+不论模型生成了几个换行，都被统一为首尾各 1 个。GLM-5.1 更严重——`content.strip()` 把 `</think>` 后所有换行都吞掉（`chat_template.jinja:L80-81`）。
+
+DeepSeek V4 Pro 最好——`thinking_template = "{reasoning_content}"` 直接拼接，不加额外空白（`encoding_dsv4.py:L47`）。Kimi K2.6 也不做 strip（`chat_template.jinja:L89`），但依赖 content 字段保留前导 `\n`。
+
+**Parser 端**。vLLM 和 SGLang 的 reasoning parser 行为不同：
+
+- **vLLM**：所有模型的 reasoning parser 用 `partition()` 纯字符串切片——**零漂移**（`basic_parsers.py:L168-178`）。
+- **SGLang**：所有模型做 `.strip()`/`.rstrip()`——**有漂移**（`reasoning_parser.py:L75,L89,L102`；streaming 路径 `L153`）。
+
+这意味着同一模型、同一 chat template，在 vLLM 上可能命中 prefix cache，在 SGLang 上可能不命中——仅因为 reasoning parser 的实现差异。
+
+### 2.3 截断补闭合
+
+当模型因 `max_tokens` 截断时，re-render 会补上模型未生成的闭合标签或 stop token。
+
+**Reasoning 截断**（`</think>` 缺失）。Qwen3.6、GLM-5.1、Kimi K2.6 的 chat template 总是输出完整的 `<think>...</think>` 闭合（`chat_template.jinja:L101,L76,L89`），即使模型没有生成 `</think>`，re-render 也会补上。DeepSeek V4 Pro 采取更安全的策略：直接 `assert` 失败，拒绝处理不完整的 thinking（`encoding_dsv4.py:L718`）。
+
+**Content 截断**（stop token 缺失）。所有模型的 chat template 在 assistant 消息末尾固定追加 stop token：Qwen3.6 的 `<|im_end|>\n`（`chat_template.jinja:L130`）、Kimi K2.6 的 `<|im_end|>`（`chat_template.jinja:L79`）、DeepSeek V4 Pro 的 `eos_token`（`encoding_dsv4.py:L45`）。GPT-OSS 还有 stop token 类型变化：训练时用 `<|return|>` 触发生成结束，历史中用 `<|end|>`（`chat_template.jinja:L311,L314`）。
+
+截断不可避免，但补闭合的 token 破坏 prefix。Renderers <Ref n={8} /> 的 bridge 在拼接点合成 close token——只追加不重写——是正确路径。
+
+### 2.4 Tool call 格式转换与 JSON 规范化
+
+这是最难修复的漂移源。完整 roundtrip：模型输出 → **parser 提取 tool_calls**（格式转换 + JSON 规范化）→ 工具执行 → **chat template 渲染回模型格式**（可能二次编码）。两端都可能有损。
+
+**Parser 端：格式转换**。Qwen3.6 和 GLM-5.1 的模型输出是 XML 格式，但 parser 把它转成 JSON dict 再 `json.dumps`——**不可逆**：
+
+- vLLM `Qwen3XMLToolParser`（`qwen3xml_tool_parser.py:L731-732,L1039`）：XML → JSON + 前导 `\n` 去除 + `ast.literal_eval` → `json.dumps` 类型转换。
+- vLLM `Glm4MoeModelToolParser`（`glm4_moe_tool_parser.py:L224`）：XML → JSON + `.strip()` + `json.loads`/`ast.literal_eval` → `json.dumps`。
+- SGLang `Qwen25Detector`（`qwen25_detector.py:L66`）：**格式不匹配**——用 Qwen2.5 JSON parser 解析 Qwen3 XML 输出，`json.loads(match_result.strip())`。
+- SGLang `Glm4MoeDetector`：XML → JSON + 类型强制转换，最终 `json.dumps`（`base_format_detector.py:L84-86`）。
+
+DeepSeek V4 Pro 的 DSML 也被转为 JSON：vLLM `DeepSeekV4ToolParser`（`deepseekv32_tool_parser.py:L228`）、SGLang `DeepSeekV4Detector`（`deepseekv32_detector.py:L66,L96,L124`）都做 `.strip()` + `json.loads` + `json.dumps`。GPT-OSS 更直接——vLLM `OpenAIToolParser` 显式 `json.dumps(json.loads(raw_args))`（`openai_tool_parser.py:L63`）。
+
+**Kimi K2.6 是唯一例外**——vLLM `KimiK2ToolParser`（`kimi_k2_tool_parser.py:L96-104`）和 SGLang `KimiK2Detector`（`kimik2_detector.py:L148`）都保留原始 JSON 字符串，不做 `json.loads` → `json.dumps` 规范化。
+
+**Chat template 端：二次编码**。即使 parser 保留了原始字符串，chat template 渲染时也可能引入漂移。如果 `arguments` 字段是 string（原始保留），Qwen3.6（`chat_template.jinja:L122`）和 Kimi K2.6（`chat_template.jinja:L34`）直接输出；如果是 dict（parser 已解析），`tojson` 重新序列化的空格、key 顺序可能与模型原文不同。GPT-OSS 的 `arguments|tojson`（`chat_template.jinja:L299`）在 arguments 是 JSON 字符串时会双重编码。
+
+Parser 的 `json.loads` → `json.dumps` 是最常见的不可逆变换，且没有开关可关闭。保留 raw completion token ids 并通过 bridge 路径拼接是唯一可靠方案。
 
 ## 3. 满足 PRR 的设计规范
 
