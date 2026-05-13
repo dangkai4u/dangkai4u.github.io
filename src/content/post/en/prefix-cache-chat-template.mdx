@@ -1,0 +1,486 @@
+---
+title: "Parse-Render Roundtrip: Prefix Cache Design Principles for Open-Source Chat Templates"
+date: 2026-05-13
+draft: false
+keywords: ["prefix cache", "chat template", "tool calling", "reasoning", "agent", "LLM", "parse-render roundtrip"]
+description: "Proposing the Parse-Render Roundtrip design principle. Analyzing chat template and tool parser designs across Qwen3.6, GLM-5.1, Kimi K2.6, DeepSeek V4 Pro, and GPT-OSS — verifying token-level prefix consistency for multi-turn agent conversations."
+tags: ["LLM", "Inference", "Agent"]
+categories: ["AI"]
+subtitle: "In the age of agents, prefix cache hit rate is the key to inference efficiency. We propose the Parse-Render Roundtrip principle and analyze whether open-source chat templates can guarantee token prefix consistency across conversation turns."
+toc: true
+mathjax: false
+---
+
+import Figure from '@/components/Figure.astro'
+import Ref from '@/components/Ref.astro'
+import Callout from '@/components/Callout.astro'
+
+## 1. Why Prefix Cache Matters for Agents
+
+In agent multi-turn conversations, every request includes the full conversation history. A 10-turn tool-calling session might send tens of thousands of tokens in the 10th turn, yet over 90% are repeated from previous turns. If the inference engine can cache the KV states for these repeated prefix tokens, it can skip redundant computation and reduce time-to-first-token (TTFT) from seconds to milliseconds.
+
+This is the core value of prefix cache (also called prompt cache). vLLM's automatic prefix caching <Ref n={1} /> and SGLang's RadixAttention <Ref n={2} /> both implement KV cache reuse based on token id prefix matching.
+
+But prefix cache has a strict requirement: **the new request's token id sequence must exactly prefix-match the previous request's token id sequence**. A single token mismatch invalidates the entire cache.
+
+## 2. The Consistency Chain: From Generation to Next Request
+
+In an agent tool-calling scenario, the full chain looks like:
+
+```
+Turn N request → inference engine apply_chat_template → tokenize → token ids (t₁)
+                                                                    ↓
+                                                         model generates → token ids (t_r)
+                                                                    ↓
+                                                         detokenize → text (s₁)
+                                                                    ↓
+                                              inference engine tool parser → structured tool_call
+                                              inference engine reasoning parser → reasoning_content
+                                                                    ↓
+                                              client constructs Turn N+1 messages
+                                                                    ↓
+Turn N+1 request → inference engine apply_chat_template → tokenize → token ids (t₂)
+```
+
+Prefix cache requires: `t₁ ∥ t_r` is a prefix of `t₂` (where `∥` denotes concatenation).
+
+Three parts of this chain can break consistency:
+
+1. **Reasoning content handling**: The model's `<think>...</think>` output is extracted by the reasoning parser as `reasoning_content`. When constructing the next turn's assistant message, this content must be placed back verbatim. If the chat template doesn't preserve reasoning content, or preserves it with different formatting (extra/missing whitespace), the prefix breaks.
+
+2. **Tool call serialization**: The model's tool call text is parsed into structured data (`name` + `arguments`), then re-serialized through the chat template in the next turn. If the serialization format differs from the original (e.g., JSON spacing, escaping), the prefix breaks.
+
+3. **Token boundary effects**: Even with identical text, tokenizers may produce different segmentations in different contexts.
+
+We call this consistency requirement **Parse-Render Roundtrip**:
+
+<Callout type="blue" icon="📐">
+**Parse-Render Roundtrip** requires: after the model's generated token sequence t_r is detokenized → parsed into structured data by parsers → used to construct a new request → rendered to text by chat template → tokenized into t_p, t_r must be a strict prefix of t_p.
+
+Formally:
+1. **String level**: s₁ (the relevant portion of detokenize(t_r)) is a strict prefix of s₂ (the apply_chat_template output)
+2. **Token level**: t_r is a strict prefix of t_p (the corresponding portion of tokenize(s₂))
+
+A chat template design that satisfies Parse-Render Roundtrip means that parse (tool parser / reasoning parser extracting structured data) and render (chat template serializing structured data back to text) are symmetric operations — render faithfully reproduces the model's original output from before parsing.
+</Callout>
+
+This principle applies beyond Agentic RL's token-in-token-out (TITO) scenario — **it matters for all multi-turn inference tasks** where prefix cache hits are needed. TITO sidesteps the problem entirely by eliminating the roundtrip (passing tokens directly without a text intermediate layer); Parse-Render Roundtrip analyzes the design conditions required when the roundtrip path is retained (the current approach of inference engines).
+
+## 3. How Closed-Source APIs Solve This: Server-Side Serialization
+
+Closed-source APIs have a natural advantage: **chat template application happens entirely server-side**. Users send structured messages without participating in text assembly.
+
+**OpenAI Responses API** <Ref n={3} /> uses `previous_response_id` for state chaining. The client only passes the previous response id plus new user input; the server reconstructs the full context from its own storage. Since serialization is fully server-controlled, token prefix consistency is guaranteed. OpenAI reports 40-80% cache hit improvement with Responses API over Chat Completions. Prefix caching is automatic, with minimum 1024-token prefix matching at 128-token granularity.
+
+**Anthropic API** <Ref n={4} /> provides explicit `cache_control` breakpoints. Users mark content blocks with `cache_control: {"type": "ephemeral"}`, and the system automatically tries prefix matching at the marked position and all prior block boundaries. Cache TTL defaults to 5 minutes (refreshed on hit), extendable to 1 hour at additional cost. Cache reads cost only 10% of base input token price.
+
+The common thread: **users don't need to worry about chat template assembly details — consistency is guaranteed by the provider**.
+
+The challenge for open-source models: chat template application happens at the inference engine level (vLLM/SGLang), and the parsing of model-generated text also happens at the engine level, but these two operations may not be perfectly symmetric. Consistency requires coordination among **model designers, inference engines, and users**.
+
+## 4. Parse-Render Roundtrip Analysis Across Five Models
+
+We selected 5 recent open-source models and analyzed whether their chat template designs satisfy Parse-Render Roundtrip:
+
+| Model | Tokenizer | Chat Template | Reasoning Format | Tool Call Format |
+|-------|-----------|---------------|------------------|-----------------|
+| Qwen3.6 | BPE (Qwen2) | Jinja2 | `<think>...</think>` | XML params |
+| GLM-5.1 | BPE | Jinja2 | `<think>...</think>` | XML tags |
+| Kimi K2.6 | tiktoken | Jinja2 | `<think>...</think>` | Special tokens |
+| DeepSeek V4 Pro | BPE (custom) | Python encoding | `<think>...</think>` | DSML XML |
+| GPT-OSS | BPE | Jinja2 | Channel-based | Channel-based |
+
+### 4.1 Qwen3.6: XML Parameters Avoid JSON Inconsistency
+
+Qwen3.6's tool call format uses XML parameter tags instead of JSON:
+
+```xml
+<tool_call>
+<function=get_weather>
+<parameter=location>
+Beijing
+</parameter>
+</function>
+</tool_call>
+```
+
+The advantage: **parameter values are embedded directly in XML tags without JSON serialization/deserialization**. The chat template iterates through `tool_call.arguments|items` and outputs each parameter individually, with no `json.dumps` involved. This fundamentally eliminates JSON spacing, escaping, and separator inconsistencies.
+
+For reasoning, Qwen3.6 provides a `preserve_thinking` parameter:
+
+- `preserve_thinking=True`: Preserves `<think>...</think>` blocks in history → prefix cache fully hits
+- Default: Reasoning dropped from earlier turns, only kept after the last user message → prefix breaks at historical assistant messages
+
+When `enable_thinking=False`, the template outputs an empty `<think>\n\n</think>\n\n` placeholder that doesn't affect prefix matching.
+
+<Callout type="blue" icon="💡">
+**Key design**: Qwen3.6's generation prompt already includes `<think>\n`, so the model's first generated token follows immediately after. The chat template backfill uses `<think>\n` + `reasoning_content` + `\n</think>\n\n`, matching the generation format exactly.
+</Callout>
+
+### 4.2 GLM-5.1: Whitespace Sensitivity in Compact Formatting
+
+GLM-5.1 also uses XML-style tool calls:
+
+```xml
+<tool_call>get_weather<arg_key>location</arg_key><arg_value>Beijing</arg_value></tool_call>
+```
+
+Similar to Qwen — no JSON serialization involved. However, GLM has a subtle issue: **the template applies `strip()` to content**.
+
+The key template logic:
+
+```
+{%- set content = visible_text(m.content) %}
+{%- if content.strip() -%}
+{{ content.strip() }}
+{%- endif -%}
+```
+
+`content.strip()` removes leading and trailing whitespace from content. If the model generates a newline after `</think>` and before the actual content (common in practice), the template backfill strips it, causing text inconsistency:
+
+- Model generates: `</think>\nThe weather is sunny.`
+- Template backfill: `</think>The weather is sunny.`
+
+This means GLM-5.1's prefix cache consistency **depends on the model not generating newlines after `</think>`**. This is an implicit constraint not documented anywhere.
+
+### 4.3 Kimi K2.6: Special Token Isolation for Tool Calls
+
+Kimi K2.6's design is the most distinctive, using dedicated special tokens to isolate tool call components:
+
+```
+<|tool_calls_section_begin|>
+<|tool_call_begin|>{call_id}<|tool_call_argument_begin|>{json_args}<|tool_call_end|>
+<|tool_calls_section_end|>
+```
+
+Two advantages:
+
+1. **Special tokens are atomic**: The tokenizer handles `<|tool_call_begin|>` as a single token — no tokenization ambiguity
+2. **Arguments pass through verbatim**: If `tool_call.arguments` is already a JSON string, it's output as-is; if it's a dict, `tojson` serializes it. The inference engine only needs to ensure the extracted arguments string matches the original exactly
+
+Kimi's reasoning handling is also elegant. The template splits messages into `hist_msgs` (history) and `suffix_msgs` (after the last non-tool-call assistant turn):
+- **suffix_msgs** preserve reasoning content: `<think>{reasoning}</think>`
+- **hist_msgs** replace reasoning with empty `<think></think>`
+
+This means **tool call turns (in the suffix) always preserve reasoning**, because tool-calling assistant messages are followed by tool responses, placing them within the suffix range. This is a prefix-cache-friendly design.
+
+### 4.4 DeepSeek V4 Pro: The Most Complete Prefix Cache Design
+
+DeepSeek V4 Pro doesn't use Jinja2 chat templates — it provides a standalone Python encoding module, offering greater flexibility.
+
+Tool calls use DSML (DeepSeek Markup Language) format:
+
+```xml
+<｜DSML｜tool_calls>
+<｜DSML｜invoke name="get_weather">
+<｜DSML｜parameter name="location" string="true">Beijing</｜DSML｜parameter>
+</｜DSML｜invoke>
+</｜DSML｜tool_calls>
+```
+
+DSML's parameter encoding uses `string="true|false"` to distinguish string vs. non-string parameters: strings are output verbatim, non-strings use `json.dumps`. This is more precise than uniform JSON serialization, as string parameters skip JSON encoding/decoding entirely, eliminating escaping and quoting differences.
+
+DeepSeek V4 Pro has two key prefix cache design features:
+
+**1. Forced reasoning retention with tools**: The `encode_messages` function contains this logic <Ref n={5} />:
+
+```python
+effective_drop_thinking = drop_thinking
+if any(m.get("tools") for m in full_messages):
+    effective_drop_thinking = False
+```
+
+When the conversation includes tool definitions, reasoning content is always preserved regardless of the `drop_thinking` setting. This ensures prefixes don't break due to reasoning loss in tool-calling scenarios.
+
+**2. Symmetric parse/encode functions**: The module provides both `encode_arguments_to_dsml` and `decode_dsml_to_arguments` as symmetric pairs, plus `parse_message_from_completion_text` for parsing model output, ensuring parsing and encoding use identical logic.
+
+### 4.5 GPT-OSS: Channel Architecture's Prefix Cache Tradeoff
+
+GPT-OSS's chat template is fundamentally different, using a channel-based architecture:
+
+```
+<|start|>assistant<|channel|>analysis<|message|>thinking content<|end|>
+<|start|>assistant to=functions.get_weather<|channel|>commentary json<|message|>{"location":"Beijing"}<|call|>
+<|start|>functions.get_weather to=assistant<|channel|>commentary<|message|>"result"<|end|>
+<|start|>assistant<|channel|>final<|message|>response<|end|>
+```
+
+This design makes a **deliberate prefix cache tradeoff**:
+
+**Analysis channel is dropped from history**. When a later final-channel assistant message exists, the preceding analysis (thinking) message is excluded from the next turn's input. This means **GPT-OSS doesn't preserve CoT in multi-turn conversations**, and the prefix necessarily breaks at assistant messages.
+
+This is not a bug but an **intentional design decision**:
+- Dropping CoT significantly shortens input length, reducing computation costs
+- OpenAI's reasoning models (o-series) also don't expose reasoning tokens in the API
+- For tool call turns, if the assistant message only has tool calls without a subsequent final message, analysis is preserved
+
+Another tool call issue: **`tojson` double-encoding of string arguments**. The chat template uses:
+
+```
+{{- tool_call.arguments|tojson }}
+```
+
+If `arguments` is already a JSON string (e.g., `'{"location": "Beijing"}'`), `tojson` JSON-encodes the string itself, producing `"{\"location\": \"Beijing\"}"` — double escaping. This breaks prefix matching. The fix: pass arguments as a dict (after `json.loads`), so `tojson` produces correct JSON. Our tests confirm prefix cache hits when arguments are passed as dict.
+
+## 5. The Role of Inference Engines: vLLM and SGLang
+
+Inference engines play a middleman role in the prefix cache chain:
+1. Receive model-generated raw tokens → **reasoning parser** separates reasoning_content and content → **tool parser** extracts tool_calls → return structured API response
+2. Receive next-turn messages → **chat template** serializes to text → tokenize → feed to model
+
+If the parsing in (1) and serialization in (2) are asymmetric, prefix cache fails.
+
+### 5.1 The rstrip() Problem in Reasoning Parsers
+
+Both vLLM and SGLang implement per-model reasoning parsers <Ref n={6} /> <Ref n={7} />. A common pattern:
+
+```python
+# SGLang BaseReasoningFormatDetector
+reasoning_text = text[:end_pos]
+reasoning_text = reasoning_text.rstrip()  # ← strips trailing whitespace
+```
+
+`rstrip()` removes trailing whitespace from reasoning content. If the model generates a trailing newline in reasoning (`<think>content\n</think>`), the parser returns `reasoning_content` without the newline. When the chat template backfills with `<think>\n` + `reasoning_content` + `\n</think>`, the newline count may be inconsistent.
+
+### 5.2 JSON Re-serialization in Tool Parsers
+
+Both vLLM and SGLang tool parsers use `json.dumps(arguments, ensure_ascii=False)` to serialize arguments <Ref n={6} /> <Ref n={7} />. Python's `json.dumps` defaults to `(", ", ": ")` separators. If the model generated compact format `{"key":"value"}`, re-serialization produces `{"key": "value"}`.
+
+For models using JSON-format tool calls (like GPT-OSS), this is a source of prefix cache inconsistency. But for Qwen (XML params), GLM (XML tags), DeepSeek (DSML with string flag), and Kimi (arguments pass-through), JSON re-serialization is not an issue.
+
+## 6. Parse-Render Roundtrip Test Results
+
+We built an automated test script that simulates the complete roundtrip chain for each model, verifying whether it satisfies Parse-Render Roundtrip. Test scenarios include: tool call backfill with reasoning, reasoning retain/drop, and JSON argument serialization differences.
+
+| Model | Scenario | String Prefix | Token Prefix | Notes |
+|-------|----------|:------------:|:------------:|-------|
+| Qwen3.6 | tool call + reasoning | ✅ | ✅ | XML params, no JSON issue |
+| Qwen3.6 | multi-param tool call | ✅ | ✅ | XML params output individually |
+| Qwen3.6 | reasoning dropped (default) | ❌ | ❌ | History reasoning deleted |
+| Qwen3.6 | reasoning preserved | ✅ | ✅ | `preserve_thinking=True` |
+| GLM-5.1 | tool call + reasoning | ❌ | ❌ | `strip()` causes whitespace mismatch |
+| GLM-5.1 | reasoning dropped | ❌ | ❌ | Same + reasoning deleted |
+| Kimi K2.6 | tool call + reasoning | ✅ | ✅ | Special token isolation |
+| Kimi K2.6 | reasoning dropped | ✅ | ✅ | Suffix design preserves tool turns |
+| DeepSeek V4 | tool call + reasoning | ✅ | ✅ | DSML + forced retention |
+| DeepSeek V4 | forced drop_thinking | ✅ | ✅ | Auto-disabled when tools present |
+| GPT-OSS | tool call (string args) | ❌ | ❌ | `tojson` double-encoding |
+| GPT-OSS | tool call (dict args) | ✅ | ✅ | Dict input avoids issue |
+
+## 7. Edge Cases: When Generation Doesn't Follow the Script
+
+The tests above assume models generate "perfectly formatted" output. But in real inference, models may produce incomplete, malformed, or unexpectedly whitespace-laden content. These edge cases have even more severe effects on prefix cache — not only breaking prefix consistency, but potentially causing tool call parsing failures or reasoning content loss.
+
+### 7.1 Truncated Thinking: Missing `</think>`
+
+When a model is truncated due to `max_tokens`, the reasoning block may be incomplete — an opening `<think>` without a closing `</think>`. Each engine handles this differently:
+
+**vLLM**'s `BaseThinkingReasoningParser.is_reasoning_end()` scans token ids backward from the end to determine if reasoning is still in progress. If the `end_token_id` is not found, the output is treated as ongoing reasoning. The entire output becomes `reasoning_content`, with `content` set to an empty string.
+
+**SGLang**'s `BaseReasoningFormatDetector` checks for `</think>` presence in `detect_and_parse()`. If missing, all text is assigned to `reasoning_text`, with `normal_text` empty.
+
+**Impact on prefix cache**: When truncated reasoning is backfilled through a chat template in the next turn, the template wraps it as `<think>...(incomplete content)...</think>`, forcibly closing the tag. But the original generation had no `</think>`, so:
+- With the bridge approach (e.g., Renderers), the bridge synthesizes a close token (`trim_to_turn_close`), maintaining prefix consistency
+- With the re-render approach, the added `</think>` changes the token sequence, breaking the prefix
+
+Each model's chat template handles this identically — all forcibly close:
+- **Qwen3.6**: Template always outputs `<think>\n` + content + `\n</think>\n\n` when `reasoning_content` is set — prefix breaks
+- **Kimi K2.6**: Template outputs `<think>` + reasoning + `</think>` — same forced close
+- **DeepSeek V4**: Encoding module uses `thinking_end_token` to close the reasoning block — also forced
+
+This is a structural problem all models face: chat templates assume reasoning is complete.
+
+### 7.2 Tool Call Parsing Failures
+
+Models may generate malformed tool calls — incomplete JSON, misspelled parameter names, unclosed XML tags.
+
+**SGLang**'s `BaseFormatDetector` uses `partial_json_parser` for incremental JSON parsing, tolerating incomplete JSON (e.g., `{"location": "Bei`) in streaming scenarios while waiting for more tokens. But if the final JSON is still malformed, it catches `MalformedJSON` exceptions and attempts fallback.
+
+**vLLM**'s Hermes tool parser uses regex to extract JSON within `<tool_call>...</tool_call>`. If JSON parsing fails, the entire content is treated as plain text (no `tool_call` generated).
+
+**Impact on prefix cache**:
+- **Parse failure → no tool_call**: The API response contains no `tool_calls` field, so the client doesn't construct a tool response. The next turn's request excludes the tool interaction — prefix breaks at the assistant message (because the original generation contained malformed tool call text, but re-render only has content)
+- **Partial parse success**: If the engine extracts partial arguments, re-serialization may differ from the original text — prefix breaks
+- **Qwen's advantage**: XML parameter format is more tolerant of partial errors. Each parameter is an independent `<parameter=name>value</parameter>` block — one parameter's error doesn't affect parsing of others
+
+### 7.3 Unexpected Whitespace in Generated Content
+
+Models may generate unexpected whitespace characters (`\n`, spaces, `\t`) at critical positions. These characters are easily lost or modified during the roundtrip.
+
+**Typical problem scenarios**:
+
+1. **Newlines after `</think>`**: Model generates `</think>\n\nHello`, but the chat template uses `content.strip()` producing `</think>Hello`. GLM-5.1 has this issue.
+
+2. **Whitespace before tool calls**: Model generates `content\n\n<tool_call>...`. The reasoning parser keeps `\n\n` in the content, but the chat template may insert different whitespace between content and tool_call. Qwen3.6's template has explicit newline logic: `\n\n` before tool_call when content exists, nothing when it doesn't.
+
+3. **Trailing whitespace in reasoning content**: SGLang's reasoning parser applies `rstrip()` to reasoning_text. If the model generates `<think>reasoning\n</think>`, the parser returns `"reasoning"` instead of `"reasoning\n"`. Template backfill may produce a different whitespace pattern.
+
+4. **Newlines in parameter values**: Models may generate newlines within tool call parameter values — e.g., in code parameters. JSON serialization escapes `\n` as `\\n`, but if the original value was already an escaped string, re-serialization may produce `\\\\n` (double escaping).
+
+**Model-specific handling**:
+- **Qwen3.6**: XML parameter values output line-by-line, `<parameter=name>\nvalue\n</parameter>\n` — template format is fixed, whitespace positions are deterministic
+- **DeepSeek V4**: DSML's `string="true"` parameters are output verbatim with no whitespace processing
+- **GPT-OSS**: Channel delimiters (`<|message|>`, `<|end|>`) are atomic tokens, confining whitespace issues to within message content
+
+### 7.4 Multi-Tool-Call Ordering and ID Issues
+
+When models generate multiple tool calls in a single response, additional edge cases arise:
+
+- **Tool call ID generation**: Inference engines typically assign UUIDs to each tool call. These IDs are not model-generated but engine-assigned. On re-render, the chat template must output the same IDs — but if the engine uses random UUIDs, each render produces different IDs. Kimi K2.6 avoids this by including `call_id` in the model's generation (e.g., `<|tool_call_begin|>call_001`)
+- **Tool response ordering**: If multiple tool calls execute in parallel, tool responses may return in a different order than the calls. DeepSeek V4's `sort_tool_results_by_call_order()` explicitly reorders tool results by call order, ensuring consistent serialization
+- **Partial tool call success**: If only some tool calls succeed out of several, the engine must handle it. Typically each tool response corresponds to a `tool_call_id`, and clients only return successful ones. This creates asymmetry — 3 tool_calls in the assistant message but only 2 tool responses — and the chat template must handle this correctly
+
+## 8. A Different Approach: PrimeIntellect Renderers
+
+The analysis above focuses on "how to make chat template roundtrips consistent" — patching Jinja2 templates, adjusting parameters, avoiding JSON re-serialization. But PrimeIntellect's open-source project renderers <Ref n={8} /> asks a more fundamental question: **why re-render at all?**
+
+### 8.1 Why Jinja2 Templates Structurally Cannot Solve This
+
+Chat template roundtrip is essentially "decode-reencode": model generates tokens → decode to structured data → reencode to tokens. Even with perfect template design, several **structural problems** cannot be solved within the Jinja2 framework:
+
+**1. Python type traps.** Jinja2 templates run in a Python environment, and `str(False)` outputs `"False"` instead of JSON's `"false"`. Qwen3.5's chat template caused ~50% of tool call rollouts to fail because of this — boolean parameter values drifted in case on re-render, shifting all subsequent token positions.
+
+**2. BPE retokenization.** `apply_chat_template` retokenizes the entire conversation from strings. At concatenation boundaries, BPE merges may produce different results than the first tokenization because neighboring byte context has changed.
+
+**3. Stop token consumption.** Engines like vLLM consume stop tokens (e.g., `<|im_end|>`) but don't return them in the API response. On re-render the template regenerates this token, but its position context in the full sequence has changed.
+
+**4. `apply_chat_template` doesn't accept token input.** This is the most fundamental limitation — Jinja2 templates can only re-render from messages (strings), they cannot accept "here are the existing tokens, just append new content." The bridge paradigm is inexpressible in Jinja2.
+
+### 8.2 The Renderer Protocol: Replacing Chat Templates
+
+Renderers defines a `Renderer` protocol (Python Protocol, structural subtyping), with core methods:
+
+```python
+class Renderer(Protocol):
+    def render(self, messages, tools, add_generation_prompt) -> RenderedTokens: ...
+    def parse_response(self, token_ids) -> ParsedResponse: ...
+    def bridge_to_next_turn(self, prev_prompt_ids, prev_completion_ids,
+                            new_messages, tools) -> RenderedTokens | None: ...
+    def get_stop_token_ids(self) -> list[int]: ...
+```
+
+**`render()`** is equivalent to `apply_chat_template`, but its output `RenderedTokens` includes not just token ids but per-token message attribution indices.
+
+**`parse_response()`** is the inverse of render — accepts model-generated token ids and returns a structured `ParsedResponse` (content, reasoning_content, tool_calls). Equivalent to the inference engine's tool parser + reasoning parser.
+
+**`bridge_to_next_turn()`** is the core innovation — accepts the previous turn's prompt token ids + completion token ids + new messages, **without retokenizing existing content**, only appending new turn tokens.
+
+### 8.3 How Bridge Works
+
+The `bridge_to_next_turn()` contract (using the Qwen3.5 implementation as example):
+
+> The return value `B` satisfies: `B[:len(prev_prompt) + len(prev_completion)] == prev_prompt + prev_completion`, and `B` ends at the next assistant turn's generation prompt.
+
+In other words: **zero retokenization of existing content, pure append.** The concrete steps:
+
+**Step 1 — Trim to turn close.** Scan backward through `prev_completion_ids` looking for the stop token (e.g., `<|im_end|>`). If found, truncate to that point. If not found (previous turn truncated at max_tokens), **synthesize** a canonical close token and append it. This is safe because the renderer knows precisely which token closes a turn — and this is exactly what a generic `DefaultRenderer` cannot do, since it knows nothing about how an arbitrary Jinja2 template closes turns.
+
+**Step 2 — Re-emit the trailing newline.** A critical detail: `render()` outputs `\n` after `<|im_end|>` as part of the turn, but vLLM stops at `<|im_end|>` and never returns this `\n`. The bridge explicitly re-emits it:
+
+```python
+# render() outputs \n after the turn close, but vLLM stops at the stop token
+# so the \n is not in prev_completion — re-emit it here
+emit_text("\n", -1)
+```
+
+**Step 3 — Render new messages.** Only render the new messages (tool responses, user follow-ups) using the same `emit_special` / `emit_text` primitives as `render()`. **The bridge refuses to accept assistant messages in new_messages** — assistant tokens are model-sampled and must not be retokenized.
+
+**Step 4 — Append generation prompt.** Concatenate the same generation prompt that `render()` would produce (e.g., `<|im_start|>assistant\n<think>\n`).
+
+### 8.4 Why BPE Boundaries Aren't a Problem
+
+The bridge's concatenation point is always a special token (e.g., `<|im_end|>`), and special tokens are atomic in the vocabulary — they don't participate in BPE merges. The `\n` emitted after the close is encoded independently, never merging with the preceding special token or the following `<|im_start|>`. This is a structural feature of chat template formats: every turn boundary has a special token serving as a BPE isolation point.
+
+The failure mode of the re-render path is precisely this: the assistant's sampled content gets retokenized from its decoded string, and BPE may produce different token sequences when neighboring bytes change. The Renderers README reports that on Qwen3.5-35B-A3B, the standard re-render path produced 32 prefix breaks out of 64 rollouts, while the bridge path produced 0.
+
+### 8.5 Per-Token Attribution: Direct Benefit for RL Training
+
+`RenderedTokens` marks each token with its source message index:
+
+```python
+@dataclass
+class RenderedTokens:
+    token_ids: list[int]
+    message_indices: list[int]  # -1 = template structural token
+```
+
+`-1` indicates template-injected structural tokens (e.g., `<|im_start|>system`), while other values are caller message indices. This is directly useful for RL training: based on `message_indices` + message role, you can produce precise per-token loss masks (only compute loss on assistant-generated tokens) in a single render pass, without post-hoc alignment.
+
+### 8.6 Model Renderer Implementation Differences
+
+Renderers provides hand-written renderers for 13+ models including Qwen3/3.5/3.6, GLM-4.5/5/5.1, Kimi K2/K2.5, DeepSeek V3, Nemotron-3, and GPT-OSS. Each renderer is verified by tests asserting `renderer.render_ids(msgs) == tokenizer.apply_chat_template(msgs, tokenize=True)`, ensuring initial rendering exactly matches the official template.
+
+**Qwen3.5 → Qwen3.6: A one-line fix.** The Qwen3.6 renderer inherits from Qwen3.5, overriding a single method:
+
+```python
+class Qwen36Renderer(Qwen35Renderer):
+    @staticmethod
+    def _render_arg_value(arg_value: Any) -> str:
+        if isinstance(arg_value, str):
+            return arg_value
+        return json.dumps(arg_value, ensure_ascii=False)
+```
+
+Qwen3.5 used Python's `str()` for non-string arguments (`True` → `"True"`), while Qwen3.6 switched to `json.dumps` (`True` → `"true"`). This single-line difference caused real prefix breaks — boolean case drift on re-render shifted every subsequent token.
+
+**Kimi K2's structural differences.** Kimi K2 uses a completely different token vocabulary (`<|im_user|>`, `<|im_assistant|>`, `<|im_middle|>`, etc.) and treats reasoning as inline content rather than a separate field. Its renderer looks up all special token ids from the tokenizer vocabulary at construction time, and the bridge follows the same pattern but with its own token vocabulary. Kimi K2 also auto-injects a default system message when none is present; the bridge must avoid re-injecting it.
+
+**Thinking preservation strategies.** Renderers provides more flexible reasoning retention control than chat templates:
+- `preserve_all_thinking`: Preserve reasoning in all historical turns
+- `preserve_thinking_between_tool_calls`: Only preserve reasoning within the current tool call cycle (the contiguous assistant-tool block after the most recent user message)
+
+These strategies are inexpressible in Jinja2 templates — templates only have simple boolean toggles (`preserve_thinking`), without the granularity to implement "preserve per tool call cycle."
+
+### 8.7 Limitations and Takeaways
+
+Renderers is currently designed for RL training (GRPO/PPO rollout) and requires hand-written renderer implementations per model. It doesn't directly replace inference engine chat template logic. But its core insights can guide inference engine design:
+
+1. **Bridge over re-render**: Inference engines can implement similar bridge mechanisms internally, preserving existing request token sequences and only appending new turns
+2. **Parse and render should be symmetric**: Treat tool parser / reasoning parser and chat template as inverse operations, not independent components
+3. **Per-token attribution as a first-class citizen**: Record each token's source at render time, rather than inferring it after the fact
+
+## 9. Summary: Parse-Render Roundtrip Design Principles
+
+### For Model Designers
+
+1. **Avoid JSON serialization for tool calls**: Qwen's XML params and DeepSeek's DSML both embed parameter values directly in markup tags, bypassing JSON serialization entirely. If JSON is necessary, ensure the chat template's `tojson` matches the model's generated JSON format exactly (separators, escaping rules, etc.).
+
+2. **Reasoning retention strategy**: Provide explicit toggles (like Qwen's `preserve_thinking`, GLM's `clear_thinking`), and **default to retaining reasoning in tool-calling scenarios** (like DeepSeek V4's forced logic).
+
+3. **Avoid implicit whitespace processing**: `strip()` and `trim` in chat templates break text consistency. If the model generates specific whitespace patterns, the template should preserve them verbatim.
+
+4. **Generation prompt / backfill symmetry**: The tail format of `add_generation_prompt=True` must exactly match the head format of assistant message serialization.
+
+### For Inference Engines (vLLM / SGLang)
+
+1. **Tool parsers should preserve raw text** rather than re-serialize after parsing. Return both structured data and original text fragments, letting the chat template prefer original text.
+
+2. **Reasoning parsers should avoid `rstrip()`**, or at least ensure strip behavior matches the chat template's backfill logic.
+
+3. **Provide a "raw assistant text" passthrough mechanism** allowing users to pass the original assistant text in the next turn, bypassing the structured → re-serialized roundtrip.
+
+### For Users
+
+1. **Enable reasoning retention**: Set the appropriate parameter in vLLM/SGLang API requests (e.g., `preserve_thinking=True`).
+2. **Use dict for arguments, not string**: When constructing assistant messages, parse tool_call arguments into a dict before passing, to avoid `tojson` double-encoding.
+3. **Mind inference engine versions**: Tool parser and reasoning parser implementations may change between versions.
+
+---
+
+## References
+
+[1] vLLM. Automatic Prefix Caching. vLLM Documentation. [Link](https://docs.vllm.ai/en/latest/design/automatic_prefix_caching.html)
+
+[2] Zheng, L., et al. SGLang: Efficient Execution of Structured Language Model Programs. arXiv:2312.07104. [Link](https://arxiv.org/abs/2312.07104)
+
+[3] OpenAI. Prompt Caching Guide. OpenAI API Documentation. [Link](https://developers.openai.com/api/docs/guides/prompt-caching)
+
+[4] Anthropic. Prompt Caching Documentation. Anthropic Docs. [Link](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching)
+
+[5] DeepSeek. DeepSeek-V4-Pro Encoding Module. HuggingFace. [Link](https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro/blob/main/encoding/encoding_dsv4.py)
+
+[6] SGLang. Function Call Parser & Reasoning Parser. GitHub. [Link](https://github.com/sgl-project/sglang/tree/main/python/sglang/srt/function_call)
+
+[7] vLLM. Tool Parsers & Reasoning Parsers. GitHub. [Link](https://github.com/vllm-project/vllm/tree/main/vllm/tool_parsers)
+
+[8] PrimeIntellect. Renderers: Prefix-Preserving Chat Template Rendering. GitHub. [Link](https://github.com/PrimeIntellect-ai/renderers)

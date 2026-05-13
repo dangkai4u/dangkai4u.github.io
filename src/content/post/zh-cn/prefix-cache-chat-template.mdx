@@ -1,0 +1,557 @@
+---
+title: "Parse-Render Roundtrip：Chat Template 与 Parser 的多轮一致性规范"
+date: 2026-05-13
+lastmod: 2026-05-13
+draft: false
+keywords: ["LLM", "Prefix Cache", "Chat Template", "Tool Calling", "Reasoning Parser", "vLLM", "SGLang"]
+description: "提出 Parse-Render Roundtrip 作为 chat template、tool parser、reasoning parser 的多轮一致性规范，并对比 Qwen3.6、GLM-5.1、Kimi-K2.6、DeepSeek-V4-Pro、GPT-OSS 的遵循情况。"
+tags: ["LLM", "Agent", "Prefix Cache", "Tool Calling"]
+categories: ["AI"]
+subtitle: "Prefix cache 是动机，parse → render 的 token-exact roundtrip 才是核心约束。"
+toc: true
+mathjax: true
+---
+
+import Ref from '@/components/Ref.astro'
+import Callout from '@/components/Callout.astro'
+import DriftMatrix from '@/components/DriftMatrix.astro'
+
+## 1. 问题与 Parse-Render Roundtrip
+
+### 1.1 语义等价不等于 token-exact roundtrip
+
+Agent 场景里的多轮调用通常长这样：
+
+```text
+模型生成 token ids (t_r)
+  → detokenize 得到文本 s₁
+  → tool parser / reasoning parser 解析为结构化数据
+  → 工具执行，客户端拼出新的 messages
+  → apply_chat_template 得到下一轮 prompt 文本 s₂
+  → tokenize 得到 prompt token ids (t_p)
+```
+
+Prefix cache（vLLM 的 automatic prefix caching <Ref n={1} />、SGLang 的 RadixAttention <Ref n={2} />）想复用上一轮 KV cache，至少要满足两个条件：
+
+1. **字符串层**：`s₁` 是 `s₂` 的严格前缀。
+2. **Token 层**：`t_r` 是 `t_p` 的严格前缀。
+
+只满足第一个还不够——BPE 会受相邻字符影响，同一段文本在不同右侧上下文里可能重新分词。只满足"解析后的结构化消息等价"也不够，因为 parser 可能把 `false` 变成 Python `False`、把 JSON 重新 dump、把 thinking block 从历史里清掉。对推理系统来说，这些都是历史 token 被改写。
+
+这篇文章关心的不是"模型能不能正确调用工具"，而是更窄但更硬的性质：**模型已经采样出来的 token，在下一轮请求里是否仍然逐 token 原样出现？**
+
+### 1.2 定义 Parse-Render Roundtrip
+
+我把这条规范称为 **Parse-Render Roundtrip（PRR）**。
+
+<Callout type="blue">
+**Parse-Render Roundtrip** 要求：模型生成的 token 序列 $t_r$，经 detokenize → parser 解析为结构化数据 → 构造新请求 → chat template render 为文本 → tokenize 得到 $t_p$ 后，$t_r$ 必须是 $t_p$ 的严格前缀。
+
+形式化地：
+- **字符串层**：$s_1$（detokenize($t_r$) 的相关部分）是 $s_2$（apply\_chat\_template 输出）的严格前缀
+- **Token 层**：$t_r$ 是 $t_p$（tokenize($s_2$) 的对应部分）的严格前缀
+</Callout>
+
+这里的 roundtrip 不是普通的语义等价，而是 **token-exact** 的：模型输出先被 tool parser / reasoning parser 解析成结构化消息，再由 chat template render 回下一轮 prompt，最终重新 tokenize 后，原始生成 token 必须仍然是新 prompt token 的严格前缀。
+
+**Parser 的定位**。Parser 解决的是"看懂输出"——从模型生成的文本中提取 `content`、`reasoning_content`、`tool_calls`。这是必要的，但它不解决"保住前缀"。PRR 要求 parse + render 是对称操作：parser 可以产出结构化视图，但 render 不能因此改写模型已经生成过的 token。
+
+**容错与 PRR 的张力**。一些 tool parser 做了容错——`partial_json_parser`（SGLang）、自动补齐引号、容忍尾随逗号。这对工具执行正确且必要，但容错后的输出和模型原文不同。如果用容错结果 re-render 历史，PRR 就断了。解决方案是分层：parser 输出两个东西——`parsed_tool_calls`（容错后的结构化数据，用于工具执行）和 `raw_completion_ids`（原始 token ids，用于 prefix 延续）。当前推理引擎只保存前者然后 re-render；PRR 要求也保存后者用于 bridge。
+
+**和 TITO 的关系**。Agentic RL 里的 token-in-token-out（TITO）试图绕过有损的 parse-render roundtrip，直接在 token 层延续。PRR 则是更广泛推理系统里的最低设计规范——即使系统仍然使用 tool parser、reasoning parser 和 chat template，也不能改写模型已经生成过的 token。
+
+### 1.3 闭源 API 如何实现高 cache 命中率
+
+闭源 API 面临同样的 PRR 挑战，但通过不同路径来保证。
+
+**OpenAI：服务端控制 re-render + reasoning 持久化**
+
+OpenAI Responses API 的 `previous_response_id` <Ref n={3} /> 不是 KV cache 指针，而是服务端会话状态存储。服务器从存储中恢复完整的 response 对象，重建完整 token 序列——所有 prior input tokens 仍然计费。它的优势不是跳过 re-serialization，而是**由服务端而非客户端来 re-serialize**，通过 Harmony renderer <Ref n={4} /> 保证 byte-identical prefix，避免客户端 re-serialization 引入的差异（JSON key 顺序、空白、schema 变化等）。
+
+OpenAI 报告的 40-80% cache 提升**只针对 reasoning 模型**（o1/o3/o4-mini）<Ref n={3} />。原因很直接：Chat Completions API 中 reasoning tokens 对客户端不可见，每轮丢失，前缀更短；Responses API 在服务端持久化 reasoning tokens，形成更长的匹配前缀。值得注意的是，reasoning tokens 在下一轮被剥离（模型不重用先前 CoT），但对话其余部分形成稳定的可缓存前缀。`prompt_cache_key` 是独立的路由亲和性提示，通过 hash 前缀的前 ~256 tokens 将请求路由到同一 GPU <Ref n={3} />。
+
+**Anthropic：re-render 但严格控制 serialization**
+
+Anthropic 的 prompt caching <Ref n={5} /> 采用不同路径：每次请求完整 re-serialize（tools + system + messages），cache 匹配最长 common prefix。它通过 `cache_control` 断点显式标记缓存边界，最小缓存长度 1024 tokens。
+
+关键在于 thinking blocks 的处理 <Ref n={6} />：thinking blocks 在 tool-use continuations 中隐式保留。更新的模型（Opus 4.5+、Sonnet 4.6+）改进了策略——即使添加 non-tool-result user content 也保留 thinking blocks。JSON key 顺序、timestamp、thinking 设置变更都会导致 cache miss，因为匹配是严格的 token-exact prefix。
+
+**共同点**：两条路径的核心需求一致——reasoning tokens 在多轮中必须保留，serialization 必须 token-exact 一致。开源模型面临同样的问题，需要走同样的路径。
+
+## 2. 五个开源模型的 PRR 分析
+
+我们下载了五个模型仓库的 tokenizer + chat template 文件（不含权重），对每个模型模拟了完整的 parse-render roundtrip 链路。
+
+| 模型 | HuggingFace 仓库 | Chat Template | Tool Call 格式 |
+|------|-----------------|---------------|---------------|
+| Qwen3.6 | `Qwen/Qwen3.6-35B-A3B` | Jinja2 | XML params |
+| GLM-5.1 | `zai-org/GLM-5.1` | Jinja2 | XML tags |
+| Kimi K2.6 | `moonshotai/Kimi-K2.6` | Jinja2 | Special tokens |
+| DeepSeek V4 Pro | `deepseek-ai/DeepSeek-V4-Pro` | Python encoding | DSML |
+| GPT-OSS | `openai/gpt-oss-120b` | Jinja2 + Harmony | Channel-based |
+
+测试对话：system + user 请模型调用 `get_weather(city)` → 模型回复含 thinking + tool call → tool result → 模型最终回答 → 追加下一条 user message。在四个边界检查 text prefix 和 token prefix：
+
+| 边界 | 含义 |
+|------|------|
+| `initial_prompt → assistant_tool_call` | 首轮 prompt 接上模型工具调用 |
+| `assistant_tool_call → tool_result_prompt` | 工具调用接回 tool result |
+| `tool_result_prompt → final_answer` | tool result 接回最终回答 |
+| `final_answer → next_user_prompt` | 最终回答接回下一轮 user |
+
+**结果总览**：
+
+| 模型 | 默认模板 | 保留 reasoning 后 | 主要漂移点 |
+|------|:-------:|:-----------------:|-----------|
+| Qwen3.6 | ❌ | ✅ `preserve_thinking=True` | 历史 `<think>` 被删 |
+| GLM-5.1 | ❌ | ✅ `clear_thinking=False` | 历史 reasoning 被替换 + `strip()` |
+| Kimi K2.6 | ❌ | ✅ `preserve_thinking=True` | history/suffix 分区改写旧 thinking |
+| DeepSeek V4 Pro | ✅ | 不需要额外开关 | 有 tools 时自动保留 thinking |
+| GPT-OSS | ❌ | 需关注 `auto_drop_analysis` | analysis channel 被丢弃 |
+
+核心发现：**默认 `apply_chat_template` 服务于"把历史整理成模型偏好的提示格式"，不服务于"把模型上一轮采样 token 原样接回去"。这两个目标在 reasoning 模型上经常冲突。**
+
+除了默认的 thinking 删除外，还有多种场景会触发漂移。点击下方表格中的单元格查看具体的漂移原因和代码证据：
+
+<DriftMatrix />
+
+下面逐模型分析每个漂移场景的触发条件和代码证据。
+
+### 2.1 Qwen3.6：`preserve_thinking` 是关键开关
+
+Qwen3.6 的模板从 `message.reasoning_content` 或 content 中的 `</think>` 前缀解析 reasoning，然后根据条件决定是否渲染回历史：
+
+```jinja
+{% if preserve_thinking or loop.index0 > ns.last_query_index %}
+  <think>{{ reasoning_content }}</think>
+  {{ content }}
+{% else %}
+  {{ content }}
+{% endif %}
+```
+
+默认只保留 last user 之后的 assistant thinking；更早的 assistant thinking 被去掉。
+
+实验中前三个边界通过。失败发生在 `final_answer → next_user_prompt`：最终回答已经包含第一轮工具调用 assistant 的 thinking；追加下一条 user message 后，这个 assistant 变成"last user 之前的历史"，模板不再渲染它的 `<think>...</think>`：
+
+```text
+上一轮：  <|im_start|>assistant\n<think>\nI should call get_weather.\n</think>\n\n<tool_call>...
+下一轮：  <|im_start|>assistant\n<tool_call>...
+```
+
+`preserve_thinking=True` 后四个边界都通过。
+
+Qwen3.6 的 tool call 使用 XML 参数格式 `<function=name><parameter=key>value</parameter></function>`，不涉及 JSON 序列化，从根本上避免了 `json.dumps` 空格/转义差异。
+
+**vLLM parser**：`qwen3xml_tool_parser` 支持 XML function/parameter 解析；reasoning parser 把 `<tool_call>` 当隐式 `</think>`——处理模型跳过 `</think>` 直接进入工具调用的情况。
+
+**SGLang parser**：`qwen` 默认映射到 `Qwen25Detector`，它期待 `<tool_call>{"name":..., "arguments":...}</tool_call>` JSON 格式。Qwen3.6 的 XML function/parameter 格式需要使用 `qwen3_coder` 类 detector。格式不匹配会导致解析失败——这是 PRR 链路中容易忽略的配置问题。
+
+**漂移场景分析**：
+
+**reasoning 中换行（✗）**。提取 reasoning 时，模板对换行做了三重去除：
+
+```jinja
+{%- set reasoning_content = content.split('</think>')[0].rstrip('\n').split('<think>')[-1].lstrip('\n') %}
+{%- set reasoning_content = reasoning_content|trim %}
+```
+
+`rstrip('\n')` 去掉 `</think>` 前所有换行，`lstrip('\n')` 去掉 `<think>` 后所有换行，`|trim` 去掉两端所有空白。然后 re-render 固定格式：
+
+```jinja
+{{- '<|im_start|>' + message.role + '\n<think>\n' + reasoning_content + '\n</think>\n\n' + content }}
+```
+
+不论模型生成了 `<think>\n\nreasoning\n\n</think>` 还是 `<think>reasoning</think>`，re-render 一律变成 `<think>\nreasoning\n</think>\n\n`。换行数量被统一为首尾各 1 个。
+
+**`</think>` 后与 content 间换行（△）**。content 提取时 `lstrip('\n')` + `|trim`：
+
+```jinja
+{%- set content = content.split('</think>')[-1].lstrip('\n') %}
+{%- set content = render_content(message.content, true)|trim %}
+```
+
+re-render 固定 `</think>\n\n` 后接 content。只有模型恰好生成 `</think>\n\n` 时不漂移。如果模型生成 `</think>\n`（1 个换行）或 `</think>\n\n\n`（3 个换行），都会被统一为 2 个。
+
+**reasoning 截断（✗）**。模型因 `max_tokens` 截断时可能只有 `<think>` 没有 `</think>`。vLLM 和 SGLang 的 reasoning parser 都把 `<tool_call>` 当隐式 reasoning 结束。但 re-render 强制输出 `<think>...\n</think>\n\n`——多出了模型没生成的 `</think>\n\n`。
+
+**content 截断（✗）**。模板在 assistant 消息末尾固定追加 `<|im_end|>\n`：
+
+```jinja
+{{- '<|im_end|>\n' }}
+```
+
+截断时模型没有生成这些 token，re-render 多出了。
+
+**tool_call 截断（△）**。XML 参数格式每个 `<parameter=name>value</parameter>` 是独立块——已完成的参数能还原，但 re-render 会补上 `</function>\n</tool_call>` 闭合标签。相比 JSON 格式（一个逗号错误整个对象失败），XML 部分容错是正面特性。
+
+**tool_call arguments 序列化（✓）**。参数用 XML 格式而非 JSON：
+
+```jinja
+{%- set args_value = args_value | string if args_value is string else args_value | tojson | safe %}
+```
+
+字符串参数直接输出，不经过 `json.dumps`，从根本上避免了 JSON 空格/转义差异。
+
+### 2.2 GLM-5.1：`strip()` 与历史 thinking 清理
+
+GLM-5.1 的模板有两个影响 PRR 的设计。
+
+第一是历史 thinking 清理，逻辑类似 Qwen：
+
+```jinja
+{% if ((clear_thinking is defined and not clear_thinking)
+      or loop.index0 > ns.last_user_index) and reasoning_content %}
+  {{ '<think>' + reasoning_content + '</think>' }}
+{% else %}
+  {{ '</think>' }}
+{% endif %}
+```
+
+默认只保留最新 assistant 的 thinking，旧 assistant 要么丢 reasoning，要么只留一个 `</think>`。`clear_thinking=False` 后保留所有 reasoning。
+
+第二是 `content.strip()`：
+
+```jinja
+{%- set content = visible_text(m.content) %}
+{%- if content.strip() -%}
+{{ content.strip() }}
+{%- endif -%}
+```
+
+如果模型在 `</think>` 后生成换行再接 content（实际推理中很常见），template 回填时 `strip()` 去掉换行：
+
+```text
+模型生成：  </think>\nThe weather is sunny.
+模板回填：  </think>The weather is sunny.
+```
+
+`clear_thinking=False` 后四个边界通过，但 `strip()` 的风险仍然存在——它是一个隐式约束，依赖于模型不在特定位置生成空白。
+
+**vLLM parser**：GLM MoE tool parser 支持 `<tool_call>name<arg_key>key</arg_key><arg_value>value</arg_value></tool_call>` 格式。
+
+**SGLang parser**：`glm`/`glm45` detector 支持相同的 XML tag 格式。两个引擎在 GLM 上的 parser 行为基本一致。
+
+**漂移场景分析**：
+
+**reasoning 中换行（✓）**。提取 reasoning 时不做 strip：
+
+```jinja
+{%- set reasoning_content = content.split('</think>')[0].split('<think>')[-1] %}
+```
+
+re-render 直接拼接，不加额外换行：
+
+```jinja
+{{ '<think>' + reasoning_content + '</think>'}}
+```
+
+如果模型生成 `<think>\nreasoning\n</think>`，reasoning_content 为 `\nreasoning\n`，re-render 结果 `<think>\nreasoning\n</think>` 与原始一致。但如果 reasoning 通过 `message.reasoning_content` 字段传入且被中间环节 strip，则会漂移。
+
+**`</think>` 后与 content 间换行（✗）**。这是 GLM 最严重的漂移源——`content.strip()`：
+
+```jinja
+{%- if content.strip() -%}
+{{ content.strip() }}
+{%- endif -%}
+```
+
+模型几乎总是在 `</think>` 后生成换行再接 content。`strip()` 吞掉所有首尾空白：`</think>\n\nThe weather is sunny.` → `</think>The weather is sunny.`。只有模型生成 0 个换行时不漂移——但这在实际推理中几乎不发生。
+
+**reasoning 截断（✗）**。类似 Qwen——parser 隐式截断后，re-render 补上 `</think>`。模板强制输出 `<think>{rc}</think>`，多出了模型未生成的闭合标签。
+
+**content 截断（△）**。GLM 模板中 assistant 没有显式追加 stop token，下一条消息的 role tag（如 `<|user|>`、`<|observation|>`）直接跟在 content 后。如果 content 被截断，下一条消息的标签会紧跟在截断处——这本身不多出 token，但 `strip()` 仍然可能改变截断位置附近的空白。
+
+**tool_call 截断（△）**。XML 格式，已完成的 `<arg_key><arg_value>` 块可独立解析。但 re-render 会补上闭合标签。
+
+**tool_call arguments 序列化（△）**。字符串参数直接输出，非字符串用 `tojson`：
+
+```jinja
+{{ v | tojson(ensure_ascii=False) if v is not string else v }}
+```
+
+风险在于 `tojson` 的格式可能与模型原文不同：数字精度（`1.0` vs `1`）、布尔值大小写（Python `True` → JSON `true` 由 `tojson` 处理，但中间环节可能传入字符串 `"True"`）。
+
+### 2.3 Kimi K2.6：history/suffix 分区改写旧工具调用
+
+Kimi K2.6 的模板设计更特殊。它找最后一个"非工具调用 assistant message"，把 messages 切成两段：
+
+```jinja
+hist_msgs = messages[:last_non_tool_call_assistant+1]
+suffix_msgs = messages[last_non_tool_call_assistant+1:]
+```
+
+`hist_msgs` 中 assistant 固定渲染为 `<think></think>` + content；`suffix_msgs` 中 assistant 保留真实 reasoning。
+
+这带来一个更隐蔽的漂移——**失败比其他模型更早**。工具调用刚生成时，它处在 suffix 中，reasoning 保留。一旦 tool result 后面追加最终回答 assistant，这个最终回答成为"最后一个非工具调用 assistant"，之前的工具调用 assistant 被移入 history，reasoning 变空：
+
+```text
+suffix 时：  <think>I should call get_weather.</think><|tool_calls_section_begin|>...
+进入 history：<think></think><|tool_calls_section_begin|>...
+```
+
+实验中 `tool_result_prompt → final_answer` 就失败了。`preserve_thinking=True` 后所有 message 都走 suffix，四个边界通过。
+
+Kimi K2.6 的 tool call 使用 special token 隔离各部分：`<|tool_calls_section_begin|>`、`<|tool_call_begin|>`、`<|tool_call_argument_begin|>`、`<|tool_call_end|>`。Tokenizer 将这些作为原子 token 处理，不存在分词歧义。
+
+**vLLM parser**：`kimi_k2_tool_parser` 和 `kimi_k2_reasoning_parser` 都识别 tool section marker。
+
+**SGLang parser**：`kimi_k2` detector 把 `<|tool_calls_section_begin|>` 作为 reasoning 结束的信号。
+
+**漂移场景分析**：
+
+**reasoning 中换行（△）**。模板直接拼接 rc，不加额外换行：
+
+```jinja
+{%- set rc = message.get('reasoning', message.get('reasoning_content', '')) -%}
+<think>{{rc}}</think>{{render_content(message)}}
+```
+
+模板本身不修改 rc 的内部空白。但如果 rc 字段在 parser/API 传递过程中被 strip（例如 `\nreasoning\n` → `reasoning`），`<think>` 和 reasoning 之间的换行就会丢失。
+
+**`</think>` 后与 content 间换行（△）**。模板 `</think>` 后直接接 `render_content(message)`，无间隔。`render_content` 对字符串内容直接输出：
+
+```jinja
+{%- if c is string -%}
+  {{ c }}
+{%- endif -%}
+```
+
+如果 content 字段保留了前导 `\n`（如模型生成 `</think>\nThe weather`，content = `\nThe weather`），渲染结果 `</think>\nThe weather` 与原始一致。如果 parser strip 了 content → `</think>The weather`，漂移。
+
+**reasoning 截断（✗）**。`<|tool_calls_section_begin|>` 作为 `</think>` 的隐式替代。但 re-render 强制闭合 `<think></think>`——如果原始生成中 `</think>` 缺失，多出了闭合标签。
+
+**content 截断（✗）**。模板在每条消息末尾追加 `<|im_end|>`，截断时多出模型未生成的 token。
+
+**tool_call 截断（✗）**。arguments 是 JSON 字符串，截断时需要 `partial_json_parser` 容错。容错结果（补齐引号/括号）与原始 JSON 不同。且 re-render 追加 `<|tool_call_end|><|tool_calls_section_end|>` 闭合标签。
+
+**tool_call arguments 序列化（△）**。模板对 arguments 做类型分派：
+
+```jinja
+{% if tool_call['function']['arguments'] is string %}
+{{ tool_call['function']['arguments'] }}
+{% else %}
+{{ tool_call['function']['arguments'] | tojson }}
+{% endif %}
+```
+
+如果 parser 保持 arguments 为原始 JSON 字符串 → 直接输出 → 不漂移。如果 parser 把 JSON 解析为 dict 再传回 → `tojson` 重序列化 → 空格、key 顺序可能与模型原文不同 → 漂移。
+
+**正面特性：special token 隔离**。`<|tool_calls_section_begin|>`、`<|tool_call_begin|>` 等标记在词表中是原子 token，不存在与用户输入的同形问题——其他模型的 `<tool_call>` 是普通文本，可能被注入。
+
+### 2.4 DeepSeek V4 Pro：默认最接近 PRR 友好
+
+DeepSeek V4 Pro 不使用 Jinja2，而是在 HuggingFace 仓库的 `encoding/encoding_dsv4.py` 中实现编码逻辑 <Ref n={7} />。
+
+关键设计——**有 tools 时自动保留 reasoning**：
+
+```python
+effective_drop_thinking = drop_thinking
+if any(m.get("tools") for m in full_messages):
+    effective_drop_thinking = False
+```
+
+只要对话包含 tools 定义，reasoning content 始终保留。实验中默认通过四个边界。
+
+Tool call 使用 DSML（DeepSeek Markup Language）格式，参数编码用 `string="true|false"` 区分：字符串原样输出，非字符串用 `json.dumps`。编码模块同时提供 `encode_arguments_to_dsml` 和 `decode_dsml_to_arguments` 作为对称函数，以及 `parse_message_from_completion_text` 解析模型输出——parse 和 render 在同一份代码中闭环。
+
+**vLLM parser**：`deepseekv4_tool_parser` 复用 DSML grammar，继承 V3.2 的 invoke/parameter 语法。
+
+**SGLang parser**：`deepseekv4` detector 支持 DSML tool_calls 格式。两个引擎的 parser 行为一致。
+
+**漂移场景分析**：
+
+**reasoning 中换行（✓）**。`parse_message_from_completion_text` 用 `_read_until_stop` 从 `<think>` 后读到 `</think>` 前，保留所有原始空白：
+
+```python
+index, content_delta, stop_token = _read_until_stop(index, text, [thinking_end_token, ...])
+reasoning_content = content_delta
+```
+
+re-render 用 `thinking_template = "{reasoning_content}"` 直接拼接，不加额外换行：
+
+```python
+thinking_part = thinking_template.format(reasoning_content=rc) + thinking_end_token
+```
+
+如果 rc = `\nI should call\n`，re-render = `\nI should call\n</think>`，与原始一致。
+
+**`</think>` 后与 content 间换行（✓）**。parse 时 summary_content 保留 `</think>` 后的前导换行：
+
+```python
+index, content_delta, stop_token = _read_until_stop(index, text, [eos_token, tool_calls_start_token])
+summary_content = content_delta
+```
+
+re-render 用 `assistant_msg_template = "{reasoning}{content}{tool_calls}" + eos_token` 直接拼接。如果模型生成 `</think>\ncontent`，summary_content = `\ncontent`，re-render 结果 `rc</think>\ncontent` 与原始一致。
+
+**reasoning 截断（✗）**。与其他模型不同，DeepSeek 的 parser 不做容错——直接 assert 失败：
+
+```python
+assert stop_token == thinking_end_token, "Invalid thinking format: missing </think>"
+```
+
+截断时不进入 re-render 阶段。行为更安全（不会默默漂移），但调用方需要处理异常。
+
+**content 截断（✗）**。`assistant_msg_template` 末尾固定追加 eos token（`<｜end▁of▁sentence｜>`），截断时多出。
+
+**tool_call 截断（✗）**。DSML parser 对格式错误直接 `raise ValueError`：
+
+```python
+param_kv = re.findall(r'^ name="(.*?)" string="(true|false)">(.*?)<$', param_content, flags=re.DOTALL)
+if len(param_kv) != 1:
+    raise ValueError(f"Parameter format error: '{param_content}'")
+```
+
+不容错，不进入 re-render。
+
+**tool_call arguments 序列化（✓）**。DSML 的核心 PRR 优势——`string="true"` 标记字符串参数并原样输出：
+
+```python
+value=v if isinstance(v, str) else to_json(v),
+```
+
+字符串参数不做 JSON 编码，避免了换行、引号等特殊字符的转义/反转义漂移。`encode_arguments_to_dsml` 和 `decode_dsml_to_arguments` 是对称函数，parse + render 在同一份代码中闭环。
+
+### 2.5 GPT-OSS：格式严谨但 auto-drop analysis
+
+GPT-OSS 使用 Harmony 格式 <Ref n={4} />，把 assistant 输出分成 `analysis`（thinking）、`commentary`、`final` channel：
+
+```text
+<|start|>assistant<|channel|>analysis<|message|>thinking...<|end|>
+<|start|>assistant to=functions.get_weather<|channel|>commentary json<|message|>{"city":"Paris"}<|call|>
+<|start|>assistant<|channel|>final<|message|>response<|end|>
+```
+
+模板中有一段关键逻辑——如果后续存在 final channel assistant，之前的 analysis 被丢弃：
+
+```jinja
+{% if message.thinking and not future_final_message.found %}
+  <|start|>assistant<|channel|>analysis<|message|>{{ message.thinking }}<|end|>
+{% endif %}
+```
+
+实验中两个边界失败：
+1. `tool_result_prompt → final_answer`：工具调用前的 analysis 被未来 final 触发删除。
+2. `final_answer → next_user_prompt`：final answer 自己的 thinking 在进入历史后被删除。
+
+Harmony 库暴露了 `RenderConversationConfig(auto_drop_analysis=True)` <Ref n={4} />，说明 OpenAI 内部区分了"API 响应视图"和"用于 KV cache 延续的 token 历史"。
+
+**vLLM parser**：`openai_tool_parser` 走 Harmony token parser，要求 token ids 输入（不支持纯文本）。解析 channel、recipient 和 tool call 后，会 `json.loads` 再 `json.dumps` tool arguments 来校验 JSON——这个规范化步骤可能改变原始 token。
+
+**SGLang parser**：`gpt-oss` detector 配合 `HarmonyParser` 解析 analysis/commentary/final channel。
+
+**漂移场景分析**：
+
+**reasoning 中换行（✓）**。analysis channel 用 special token 隔离：`<|start|>assistant<|channel|>analysis<|message|>{thinking}<|end|>`。thinking 内部的换行不会被修改——但前提是 analysis 没有被整体删除（见场景 1）。
+
+**`</think>` 后与 content 间换行（✓）**。GPT-OSS 不使用 `<think>` / `</think>` 标签。analysis 和 final 是独立的 channel message，各自有 `<|start|>...<|end|>` 包裹，不存在换行拼接问题。
+
+**reasoning 截断（✗）**。analysis channel 的 `<|end|>` 缺失时，parser 需要容错补上。
+
+**content 截断（✗）**。历史 assistant 用 `<|end|>` 关闭，训练时最后一条用 `<|return|>`：
+
+```jinja
+{{- "<|start|>assistant<|channel|>final<|message|>" + message.content + "<|return|>" }}
+```
+
+截断时模型可能没有生成 `<|return|>` 或 `<|end|>`。且两者之间存在 stop token 规范化——`<|return|>` 是生成停止标记，`<|end|>` 是历史记录标记。模型采样的 `completion_ids` 应记录真实 token，`history_close_ids` 记录为 prompt 合法而追加/替换的 token。
+
+**tool_call 截断（✗）**。arguments 是 JSON 格式。vLLM parser 会 `json.loads` + `json.dumps` 规范化——即使 JSON 完整，规范化也可能改变原始格式（空格、转义）。截断时容错结果更不可控。
+
+**tool_call arguments 序列化（✗）**。模板使用 `tool_call.arguments|tojson`：
+
+```jinja
+{{- tool_call.arguments|tojson }}
+```
+
+如果 `arguments` 是 JSON 字符串（如 `'{"city": "Paris"}'`），`tojson` 将其作为字符串再次 JSON 编码，产生双重转义 `"\"{\\"city\\": \\"Paris\\"}\""`。如果 `arguments` 是 dict，`tojson` 重序列化——冒号后空格（`"city": "Paris"` vs `"city":"Paris"`）可能与模型原文不同。解决方法：确保 arguments 解析为 dict 后传入，且 `tojson` 格式与模型训练时一致。
+
+tool response 也有同样问题——`message.content|tojson` 会对 tool result 做 JSON 编码：
+
+```jinja
+{{- " to=assistant<|channel|>commentary<|message|>" + message.content|tojson + "<|end|>" }}
+```
+
+## 3. 满足 PRR 的设计规范
+
+### 3.1 Renderers：bridge 优于 re-render
+
+以上分析的核心问题是：`apply_chat_template` 从 messages（字符串）出发重新渲染整个对话，无法接受"这些是已有的 token，只追加新内容"。PrimeIntellect 的 renderers 项目 <Ref n={8} /> 直接解决了这个限制。
+
+Renderers 定义了 `Renderer` 协议，核心方法：
+
+```python
+class Renderer(Protocol):
+    def render(self, messages, tools, add_generation_prompt) -> RenderedTokens: ...
+    def parse_response(self, token_ids) -> ParsedResponse: ...
+    def bridge_to_next_turn(self, prev_prompt_ids, prev_completion_ids,
+                            new_messages, tools) -> RenderedTokens | None: ...
+```
+
+`render()` 等价于 `apply_chat_template`，但输出包含逐 token 的 message 归属索引。`parse_response()` 是 render 的逆——接受 token ids，返回结构化 response。`bridge_to_next_turn()` 是核心——接受上一轮的 prompt + completion token ids + 新消息，**不重新 tokenize 已有内容**，只追加新轮次的 token。
+
+Bridge 的契约：返回值 `B` 满足 `B[:len(prev_prompt) + len(prev_completion)] == prev_prompt + prev_completion`。**已有 token 零重分词，纯追加。** 具体步骤：
+
+1. **Trim to turn close**：向后扫描 completion 寻找 stop token。如果因 max_tokens 截断而缺失，合成一个 close token 追加——这是安全的，因为 renderer 知道哪个 token 关闭一个 turn。
+2. **补尾部换行**：vLLM 在 stop token 处截断，不返回其后的 `\n`。Bridge 显式补上。
+3. **Render 新消息**：只渲染新增的 tool response / user message。Bridge 拒绝接受 assistant 消息——assistant 的 token 是模型采样的，不应被重新 tokenize。
+4. **追加 generation prompt**：拼接与 `render()` 相同的 assistant 开头。
+
+**为什么 BPE 边界不是问题**：bridge 的拼接点始终是 special token（如 `<|im_end|>`），它们在词表中是原子 token，不参与 BPE 合并。Renderers README 报告在 Qwen3.5-35B-A3B 上，标准 re-render 路径 64 次 rollout 中有 32 次前缀断裂，bridge 路径为 0 次。
+
+**Per-token 归属**：`RenderedTokens` 为每个 token 标记来源 message 索引（`-1` = 模板结构 token）。这对 RL 训练直接可用——基于 `message_indices` + role 产生精确的 per-token loss mask，无需事后对齐。
+
+### 3.2 设计建议
+
+如果你在做 self-host agent 服务或 RL 训练，按以下优先级保证 PRR：
+
+1. **保存 raw token ids**。每轮保存 `prompt_ids` 和 `completion_ids`，下一轮优先通过 token bridge 扩展，而不是重渲染全部历史。
+
+2. **结构化字段只作索引**。`reasoning_content`、`tool_calls` 可以用于 API 返回和工具执行，但不要把它们当作唯一真相——re-render 历史时不要用 re-serialize 的结果替换原始 token。
+
+3. **工具循环中保留 reasoning**。各模型的开关：
+   - Qwen3.6：`preserve_thinking=True`
+   - GLM-5.1：`clear_thinking=False`
+   - Kimi K2.6：`preserve_thinking=True`
+   - DeepSeek V4 Pro：默认（有 tools 时自动禁用 drop）
+   - GPT-OSS：关注 Harmony 的 `auto_drop_analysis`
+
+4. **Tool arguments 保留原始字节**。JSON 解析后可以得到 dict 用于工具执行，但重渲染历史时不要用 `json.dumps` 的结果替换模型原文。
+
+5. **Parser 选择必须匹配模板格式**。SGLang 的 `qwen` parser 是 Qwen2.5 JSON tool-call 格式，不等于 Qwen3.6 XML 格式。配置不匹配会导致解析失败或静默的格式漂移。
+
+6. **截断与窗口裁剪按边界裁剪**。不在 special token 序列、`<think>...</think>` block、JSON string 中间裁剪。如果必须丢历史，优先丢完整 message 或完整 tool cycle。裁剪后重新计算 cache key。
+
+7. **Prefix 检查做进 CI**。每个模型模板升级后，至少跑一组工具调用 + 多工具调用 + 无工具最终回答 + 下一轮 user + 截断 stop token 的 text-prefix 和 token-prefix 测试。
+
+### 3.3 最终判断标准
+
+判断标准很简单：
+
+```python
+assert previous_text == next_prompt_text[:len(previous_text)]
+assert previous_token_ids == next_prompt_ids[:len(previous_token_ids)]
+```
+
+只要这两个断言不能稳定通过，就不要假设 prefix cache 会稳定命中。
+
+---
+
+## 参考文献
+
+[1] vLLM. Automatic Prefix Caching. [链接](https://docs.vllm.ai/en/latest/design/automatic_prefix_caching.html)
+
+[2] Zheng, L., et al. SGLang: Efficient Execution of Structured Language Model Programs. arXiv:2312.07104. [链接](https://arxiv.org/abs/2312.07104)
+
+[3] OpenAI. Prompt Caching Guide & Conversation State. [Prompt Caching](https://developers.openai.com/api/docs/guides/prompt-caching) | [Conversation State](https://developers.openai.com/api/docs/guides/conversation-state) | [Prompt Caching 201](https://developers.openai.com/cookbook/examples/prompt_caching_201)
+
+[4] OpenAI. Harmony Response Format. [链接](https://github.com/openai/harmony)
+
+[5] Anthropic. Prompt Caching. [链接](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching)
+
+[6] Anthropic. Extended Thinking. [链接](https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking)
+
+[7] DeepSeek. DeepSeek-V4-Pro Encoding Module. [链接](https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro/blob/main/encoding/encoding_dsv4.py)
+
+[8] PrimeIntellect. Renderers: Prefix-Preserving Chat Template Rendering. [链接](https://github.com/PrimeIntellect-ai/renderers)
