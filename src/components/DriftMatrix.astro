@@ -278,7 +278,7 @@
     [
       { s: S.C, t: "Qwen3.6 — </think> 后换行",
         d: `re-render 固定 <code>&lt;/think&gt;\\n\\n</code> 后接 content（已 trim）。只有模型恰好生成 2 个 <code>\\n</code> 时不漂移。1 个→2 个，3 个→2 个，0 个→2 个。`,
-        c: `<span class="cm">{# content 提取 #}</span>\n<span class="kw">{%- set</span> content = content.split(\n    <span class="str">'&lt;/think&gt;'</span>)[-1].<span class="fn">lstrip</span>(<span class="str">'\\n'</span>) <span class="kw">%}</span>\n<span class="kw">{%- set</span> content = render_content(\n    message.content, true)|<span class="fn">trim</span> <span class="kw">%}</span>\n<span class="cm">{# re-render 固定格式 #}</span>\n<span class="str">'&lt;/think&gt;\\n\\n'</span> + content`},
+        c: `<span class="cm">{# L96: content 提取，去前导换行 #}</span>\n<span class="kw">{%- set</span> content = content\n    .split(<span class="str">'&lt;/think&gt;'</span>)[-1].<span class="fn">lstrip</span>(<span class="str">'\\n'</span>) <span class="kw">%}</span>\n<span class="cm">{# L101: re-render 固定 \\n\\n #}</span>\n{{- <span class="str">'...&lt;think&gt;\\n'</span> + reasoning_content\n    + <span class="str">'\\n&lt;/think&gt;\\n\\n'</span> + content }}`},
       { s: S.F, t: "GLM-5.1 — </think> 后换行",
         d: `<code>content.strip()</code> 吞掉所有首尾空白。<code>&lt;/think&gt;\\n\\ncontent</code> → <code>&lt;/think&gt;content</code>。模型几乎总是在 <code>&lt;/think&gt;</code> 后生成换行——这意味着几乎总是漂移。`,
         c: `<span class="kw">{%- if</span> content.<span class="fn">strip</span>() <span class="kw">-%}</span>\n{{ content.<span class="fn">strip</span>() }}\n<span class="kw">{%- endif -%}</span>\n<span class="cm">{# \\n\\n 被 strip() 吞掉 #}</span>`},
@@ -296,19 +296,19 @@
     [
       { s: S.F, t: "Qwen3.6 — reasoning 截断",
         d: `parser 把 <code>&lt;tool_call&gt;</code> 当隐式 <code>&lt;/think&gt;</code>。但 re-render 强制输出 <code>&lt;think&gt;...\\n&lt;/think&gt;\\n\\n</code>——多出了模型未生成的 <code>&lt;/think&gt;\\n\\n</code>。`,
-        c: `<span class="cm">{# re-render 强制闭合 #}</span>\n<span class="str">'&lt;think&gt;\\n'</span> + reasoning_content\n    + <span class="str">'\\n&lt;/think&gt;\\n\\n'</span> + content\n<span class="cm">{# 模型未生成 &lt;/think&gt;，多出 token #}</span>`},
+        c: `<span class="cm">{# L101: re-render 总是输出完整闭合 #}</span>\n{{- <span class="str">'&lt;|im_start|&gt;'</span> + message.role\n    + <span class="str">'\\n&lt;think&gt;\\n'</span> + reasoning_content\n    + <span class="str">'\\n&lt;/think&gt;\\n\\n'</span> + content }}`},
       { s: S.F, t: "GLM-5.1 — reasoning 截断",
         d: `类似 Qwen——parser 隐式截断后，re-render 补上 <code>&lt;/think&gt;</code>，多出模型未生成的闭合标签。`,
-        c: `{{ <span class="str">'&lt;think&gt;'</span> + reasoning_content\n    + <span class="str">'&lt;/think&gt;'</span> }}\n<span class="cm">{# 补上 &lt;/think&gt; #}</span>`},
+        c: `<span class="cm">{# L76: re-render 总是输出完整闭合 #}</span>\n{{ <span class="str">'&lt;think&gt;'</span> + reasoning_content\n    + <span class="str">'&lt;/think&gt;'</span> }}`},
       { s: S.F, t: "Kimi K2.6 — reasoning 截断",
         d: `<code>&lt;|tool_calls_section_begin|&gt;</code> 作为隐式 <code>&lt;/think&gt;</code>。re-render 强制闭合 <code>&lt;think&gt;&lt;/think&gt;</code>，多出闭合标签。`,
-        c: `<span class="cm">{# re-render 强制闭合 #}</span>\n&lt;think&gt;{{rc}}&lt;/think&gt;...\n<span class="cm">{# 原始无 &lt;/think&gt;，多出 token #}</span>`},
+        c: `<span class="cm">{# L89: re-render 总是输出完整闭合 #}</span>\n&lt;think&gt;{{rc}}&lt;/think&gt;{{render_content(message)}}`},
       { s: S.F, t: "DeepSeek V4 Pro — reasoning 截断",
         d: `与其他模型不同——parser 不做容错，直接 assert 失败。行为更安全（不会默默漂移），但调用方需要处理异常。`,
         c: `<span class="kw">assert</span> stop_token == thinking_end_token, \\\n    <span class="str">"Invalid thinking format: missing &lt;/think&gt;"</span>\n<span class="cm"># 截断时直接报错，不进入 re-render</span>`},
       { s: S.F, t: "GPT-OSS — reasoning 截断",
         d: `analysis channel 的 <code>&lt;|end|&gt;</code> 缺失时，parser 需要容错补上。补上的 token 是模型未生成的。`,
-        c: `<span class="cm">{# analysis 需要 &lt;|end|&gt; 关闭 #}</span>\n&lt;|start|&gt;assistant&lt;|channel|&gt;analysis\n  &lt;|message|&gt;thinking...&lt;|end|&gt;\n<span class="cm">{# 截断时 &lt;|end|&gt; 缺失 #}</span>`},
+        c: `<span class="cm">{# L293: analysis channel #}</span>\n{{- <span class="str">"&lt;|start|&gt;assistant&lt;|channel|&gt;analysis</span>\n    <span class="str">&lt;|message|&gt;"</span> + message.thinking\n    + <span class="str">"&lt;|end|&gt;"</span> }}\n<span class="cm">{# 截断时 &lt;|end|&gt; 缺失，需容错补上 #}</span>`},
     ],
     // scenario 4: content 截断
     [
@@ -317,7 +317,7 @@
         c: `{{- <span class="str">'&lt;|im_end|&gt;\\n'</span> }}\n<span class="cm">{# 固定追加 stop token #}</span>`},
       { s: S.C, t: "GLM-5.1 — content 截断",
         d: `模板中 assistant 没有显式追加 stop token，下一条消息的 role tag 直接跟在 content 后。<code>strip()</code> 仍然可能改变截断位置附近的空白。`,
-        c: `<span class="cm">{# 无显式 stop token #}</span>\n<span class="cm">{# 但 strip() 仍然影响空白 #}</span>`},
+        c: `<span class="cm">{# L80-81: content 输出 #}</span>\n<span class="kw">{%- if</span> content.<span class="fn">strip</span>() <span class="kw">-%}</span>\n{{ content.<span class="fn">strip</span>() }}\n<span class="kw">{%- endif -%}</span>\n<span class="cm">{# 无显式 stop token，strip() 影响尾部 #}</span>`},
       { s: S.F, t: "Kimi K2.6 — content 截断",
         d: `模板在每条消息末尾追加 <code>&lt;|im_end|&gt;</code>，截断时多出模型未生成的 token。`,
         c: `&lt;|im_end|&gt;\n<span class="cm">{# 每条消息末尾固定追加 #}</span>`},
@@ -326,13 +326,13 @@
         c: `assistant_msg_template = \\\n    <span class="str">"{reasoning}{content}{tool_calls}"</span>\n    + eos_token\n<span class="cm"># 固定追加 eos</span>`},
       { s: S.F, t: "GPT-OSS — content 截断",
         d: `历史中用 <code>&lt;|end|&gt;</code>，训练时最后一条用 <code>&lt;|return|&gt;</code>。截断时多出 token，且存在 stop token 类型变化。`,
-        c: `<span class="cm">{# 训练时 #}</span>\n<span class="str">"...&lt;|return|&gt;"</span>\n<span class="cm">{# 历史中 #}</span>\n<span class="str">"...&lt;|end|&gt;"</span>\n<span class="cm">{# stop token 类型变化 #}</span>`},
+        c: `<span class="cm">{# L311: 训练时最后一条 #}</span>\n{{- <span class="str">"...&lt;|message|&gt;"</span> + message.content\n    + <span class="str">"&lt;|return|&gt;"</span> }}\n<span class="cm">{# L314: 历史中 #}</span>\n{{- <span class="str">"...&lt;|message|&gt;"</span> + message.content\n    + <span class="str">"&lt;|end|&gt;"</span> }}`},
     ],
     // scenario 5: tool_call 截断
     [
       { s: S.C, t: "Qwen3.6 — tool_call 截断",
         d: `XML 格式每个 <code>&lt;parameter&gt;</code> 是独立块——已完成的参数能还原。但 re-render 补上 <code>&lt;/function&gt;\\n&lt;/tool_call&gt;</code> 闭合标签，多出模型未生成的 token。`,
-        c: `<span class="cm">{# XML 部分容错 #}</span>\n&lt;parameter=location&gt;\\nBeijing\\n&lt;/parameter&gt;\n<span class="cm">{# 已完成的参数可独立解析 #}</span>\n<span class="cm">{# 未完成的参数丢失 #}</span>`},
+        c: `<span class="cm">{# L119-127: XML 参数格式 #}</span>\n{{- <span class="str">'&lt;parameter='</span> + args_name + <span class="str">'&gt;\\n'</span> }}\n{{- args_value }}\n{{- <span class="str">'\\n&lt;/parameter&gt;\\n'</span> }}\n...\n{{- <span class="str">'&lt;/function&gt;\\n&lt;/tool_call&gt;'</span> }}`},
       { s: S.C, t: "GLM-5.1 — tool_call 截断",
         d: `XML 格式，已完成的 <code>&lt;arg_key&gt;&lt;arg_value&gt;</code> 块可独立解析。同样需补闭合标签。`,
         c: `&lt;tool_call&gt;get_weather\n  &lt;arg_key&gt;location&lt;/arg_key&gt;\n  &lt;arg_value&gt;Beijing&lt;/arg_value&gt;\n<span class="cm">{# 独立块可解析 #}</span>`},
@@ -344,7 +344,7 @@
         c: `param_kv = re.<span class="fn">findall</span>(\n    <span class="str">r'^ name="(.*?)" string=...'</span>,\n    param_content)\n<span class="kw">if</span> <span class="fn">len</span>(param_kv) != 1:\n    <span class="kw">raise</span> <span class="fn">ValueError</span>(...)`},
       { s: S.F, t: "GPT-OSS — tool_call 截断",
         d: `JSON 格式 + vLLM parser 的 <code>json.loads</code> → <code>json.dumps</code> 规范化——即使完整也可能改变格式，截断时更不可控。`,
-        c: `<span class="cm">{# vLLM parser 规范化 #}</span>\nargs = json.<span class="fn">loads</span>(raw_args)\nnormalized = json.<span class="fn">dumps</span>(args)\n<span class="cm"># 格式可能与模型原文不同</span>`},
+        c: `<span class="cm"># vLLM parser 规范化</span>\nargs = json.<span class="fn">loads</span>(raw_args)\nnormalized = json.<span class="fn">dumps</span>(args)\n<span class="cm"># 截断时 json.loads 失败</span>`},
     ],
     // scenario 6: tool_call args 序列化
     [
