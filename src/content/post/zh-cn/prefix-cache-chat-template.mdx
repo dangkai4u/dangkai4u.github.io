@@ -125,15 +125,13 @@ DeepSeek V4 Pro 最好——`thinking_template = "{reasoning_content}"` 直接�
 
 这意味着同一模型、同一 chat template，在 vLLM 上可能命中 prefix cache，在 SGLang 上可能不命中——仅因为 reasoning parser 的实现差异。
 
-### 2.3 截断补闭合（reasoning 截断 · content 截断）
+### 2.3 截断补闭合（reasoning 截断）
 
-当模型因 `max_tokens` 截断时，re-render 会补上模型未生成的闭合标签或 stop token。
+当模型因 `max_tokens` 截断时，re-render 会补上模型未生成的闭合标签。
 
-**reasoning 截断（无 `</think>`）。** Qwen3.6、GLM-5.1、Kimi K2.6 的 chat template 总是输出完整的 `<think>...</think>` 闭合（`chat_template.jinja:L101,L76,L89`），即使模型没有生成 `</think>`，re-render 也会补上。DeepSeek V4 Pro 采取更安全的策略：直接 `assert` 失败，拒绝处理不完整的 thinking（`encoding_dsv4.py:L718`）。
+Qwen3.6、GLM-5.1、Kimi K2.6 的 chat template 总是输出完整的 `<think>...</think>` 闭合（`chat_template.jinja:L101,L76,L89`），即使模型没有生成 `</think>`，re-render 也会补上。DeepSeek V4 Pro 采取更安全的策略：直接 `assert` 失败，拒绝处理不完整的 thinking（`encoding_dsv4.py:L718`）。
 
-**content 截断（无 stop token）。** 所有模型的 chat template 在 assistant 消息末尾固定追加 stop token：Qwen3.6 的 `<|im_end|>\n`（`chat_template.jinja:L130`）、Kimi K2.6 的 `<|im_end|>`（`chat_template.jinja:L79`）、DeepSeek V4 Pro 的 `eos_token`（`encoding_dsv4.py:L45`）。GPT-OSS 还有 stop token 类型变化：训练时用 `<|return|>` 触发生成结束，历史中用 `<|end|>`（`chat_template.jinja:L311,L314`）。
-
-截断不可避免，但补闭合的 token 破坏 prefix。Renderers <Ref n={8} /> 的 bridge 在拼接点合成 close token——只追加不重写——是正确路径。
+截断不可避免，但补闭合的 token 破坏 prefix。Renderers <Ref n={8} /> 的 bridge 在拼接点合成 close token——只追加不重写——是正确路径。注意 content 截断（无 stop token）不影响前缀匹配：stop token 追加在模型已生成 token 的末尾，不改写已有 token，prefix cache 可匹配到模型最后一个生成 token 为止。
 
 ### 2.4 tool_call 容错 · tool_call args 序列化
 

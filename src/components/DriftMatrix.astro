@@ -181,6 +181,17 @@
     line-height: 1.65;
     color: var(--text-primary, #333);
   }
+  .drift-detail-body pre.drift-eg {
+    background: rgba(234, 179, 8, 0.06);
+    border-left: 3px solid rgba(234, 179, 8, 0.4);
+    font-size: 0.82em;
+    line-height: 1.5;
+  }
+  :root[data-theme="dark"] .drift-detail-body pre.drift-eg,
+  .dark .drift-detail-body pre.drift-eg {
+    background: rgba(234, 179, 8, 0.05);
+    border-left-color: rgba(234, 179, 8, 0.3);
+  }
   .drift-detail-body pre {
     background: var(--bg-code, #f0f0f0);
     border-radius: 6px;
@@ -228,7 +239,6 @@
     "reasoning 中换行",
     "</think> 后与 content 间换行",
     "reasoning 截断（无 </think>）",
-    "content 截断（无 stop token）",
     "tool_call 容错",
     "tool_call args 序列化"
   ];
@@ -242,30 +252,36 @@
     [
       { s: S.C, t: "Qwen3.6 — 历史 thinking 保留",
         d: `默认只保留 last_query 之后的 assistant thinking。追加新 user 后，旧 assistant 的 <code>&lt;think&gt;...&lt;/think&gt;</code> 整块被删除。<br/><br/><strong>修复：</strong><code>preserve_thinking=True</code>`,
+        e: `生成  ...&lt;think&gt;\\nLet me think.\\n&lt;/think&gt;\\n\\nThe answer is 42.\n\nparse reasoning_content = "Let me think."\n      content = "The answer is 42."\n\n重建  ...\\n\\nThe answer is 42.\n      ↑ &lt;think&gt;...&lt;/think&gt; 整块删除`,
         c: `<span class="kw">{%- if</span> (preserve_thinking <span class="kw">is defined and</span> preserve_thinking <span class="kw">is true</span>)\n      <span class="kw">or</span> (loop.index0 > ns.last_query_index) <span class="kw">%}</span>\n  <span class="cm">{# render thinking #}</span>\n<span class="kw">{%- else %}</span>\n  <span class="cm">{# skip thinking, only render content #}</span>\n<span class="kw">{%- endif %}</span>`},
       { s: S.C, t: "GLM-5.1 — 历史 thinking 保留",
         d: `默认只保留 last_user 之后的 assistant thinking。更早的 assistant 的 thinking 被替换为一个孤立的 <code>&lt;/think&gt;</code>。<br/><br/><strong>修复：</strong><code>clear_thinking=False</code>`,
+        e: `生成  ...&lt;think&gt;\\nLet me think.\\n&lt;/think&gt;The answer is 42.\n\nparse reasoning_content = "Let me think."\n      content = "The answer is 42."\n\n重建  ...&lt;/think&gt;The answer is 42.\n      ↑ &lt;think&gt;+reasoning 删除，保留孤立 &lt;/think&gt;`,
         c: `<span class="kw">{%- if</span> ((clear_thinking <span class="kw">is defined and not</span> clear_thinking)\n      <span class="kw">or</span> loop.index0 > ns.last_user_index)\n      <span class="kw">and</span> reasoning_content <span class="kw">is defined -%}</span>\n{{ <span class="str">'&lt;think&gt;'</span> + reasoning_content + <span class="str">'&lt;/think&gt;'</span> }}\n<span class="kw">{%- else -%}</span>\n{{ <span class="str">'&lt;/think&gt;'</span> }}  <span class="cm">{# 替换为孤立闭合标签 #}</span>\n<span class="kw">{%- endif -%}</span>`},
       { s: S.C, t: "Kimi K2.6 — 历史 thinking 保留",
         d: `基于 history/suffix 分区。最后一个非 tool-call assistant 之前的所有 assistant thinking 变为空 <code>&lt;think&gt;&lt;/think&gt;</code>。比其他模型更早触发——tool result 后追加 final answer 时就断裂。<br/><br/><strong>修复：</strong><code>preserve_thinking=True</code>`,
+        e: `生成  ...&lt;think&gt;Let me think.&lt;/think&gt;The answer is 42.\n\nparse reasoning_content = "Let me think."\n      content = "The answer is 42."\n\n重建  ...&lt;think&gt;&lt;/think&gt;The answer is 42.\n      ↑ reasoning 清空为空标签`,
         c: `<span class="cm">{# hist_msgs 中的 assistant #}</span>\n<span class="kw">{%- if</span> message[<span class="str">'role'</span>] == <span class="str">'assistant'</span> <span class="kw">-%}</span>\n    &lt;think&gt;&lt;/think&gt;{{render_content(message)}}\n    <span class="cm">{# reasoning 固定替换为空 #}</span>`},
       { s: S.P, t: "DeepSeek V4 Pro — 历史 thinking 保留",
         d: `有 tools 时自动禁用 drop_thinking。只有无 tools 的对话中 <code>drop_thinking=True</code> 才会删除历史 reasoning。`,
         c: `effective_drop_thinking = drop_thinking\n<span class="kw">if</span> <span class="fn">any</span>(m.get(<span class="str">"tools"</span>) <span class="kw">for</span> m <span class="kw">in</span> full_messages):\n    effective_drop_thinking = <span class="kw">False</span>`},
       { s: S.C, t: "GPT-OSS — 历史 thinking 保留",
         d: `任何 tool-call assistant 的 analysis channel，只要后续存在 non-tool-call assistant 就被删除。非最后 assistant 的 thinking 也总是被丢弃。<br/><br/><strong>修复：</strong>Harmony 库 <code>auto_drop_analysis=False</code>`,
+        e: `生成  ...&lt;|channel|&gt;analysis&lt;|message|&gt;Let me think.&lt;|end|&gt;...&lt;|channel|&gt;final&lt;|message|&gt;42.\n\nparse thinking = "Let me think."\n      content = "42."\n\n重建  ...&lt;|channel|&gt;final&lt;|message|&gt;42.\n      ↑ analysis channel 整段删除`,
         c: `<span class="kw">{%- set</span> future_final_message = namespace(found=<span class="kw">false</span>) <span class="kw">%}</span>\n<span class="kw">{%- for</span> future_message <span class="kw">in</span> loop_messages[loop.index:] <span class="kw">%}</span>\n  <span class="kw">{%- if</span> future_message.role == <span class="str">'assistant'</span>\n        <span class="kw">and</span> <span class="str">"tool_calls"</span> <span class="kw">not in</span> future_message <span class="kw">%}</span>\n    <span class="kw">{%- set</span> future_final_message.found = <span class="kw">true %}</span>\n  <span class="kw">{%- endif %}</span>\n<span class="kw">{%- endfor %}</span>`},
     ],
     // scenario 1: reasoning 中换行
     [
       { s: S.F, t: "Qwen3.6 — reasoning 中换行",
         d: `提取 reasoning 时做三重去除：<code>rstrip('\\n')</code> + <code>lstrip('\\n')</code> + <code>|trim</code>。然后 re-render 固定为 <code>&lt;think&gt;\\n{rc}\\n&lt;/think&gt;\\n\\n</code>。不论模型生成几个换行，都被统一为首尾各 1 个。`,
+        e: `生成  &lt;think&gt;\\n\\nStep 1: check.\\nStep 2: call.\\n\\n&lt;/think&gt;\n\nparse reasoning_content = "Step 1: check.\\nStep 2: call."\n                           ↑ rstrip('\\n') + lstrip('\\n') + trim\n\n重建  &lt;think&gt;\\nStep 1: check.\\nStep 2: call.\\n&lt;/think&gt;\\n\\n\n      ↑ 首尾 \\n\\n → \\n，固定格式`,
         c: `<span class="kw">{%- set</span> reasoning_content =\n    content.split(<span class="str">'&lt;/think&gt;'</span>)[0]\n      .<span class="fn">rstrip</span>(<span class="str">'\\n'</span>)\n      .split(<span class="str">'&lt;think&gt;'</span>)[-1]\n      .<span class="fn">lstrip</span>(<span class="str">'\\n'</span>) <span class="kw">%}</span>\n<span class="kw">{%- set</span> reasoning_content = reasoning_content|<span class="fn">trim</span> <span class="kw">%}</span>`},
       { s: S.P, t: "GLM-5.1 — reasoning 中换行",
         d: `split 提取时保留原始空白，re-render 直接拼接不加额外换行。<code>&lt;think&gt;\\nreasoning\\n&lt;/think&gt;</code> 能原样还原。但若 <code>reasoning_content</code> 字段被中间环节 strip 则会漂移。`,
         c: `<span class="kw">{%- set</span> reasoning_content =\n    content.split(<span class="str">'&lt;/think&gt;'</span>)[0]\n      .split(<span class="str">'&lt;think&gt;'</span>)[-1] <span class="kw">%}</span>\n<span class="cm">{# 无 strip，保留原始空白 #}</span>\n{{ <span class="str">'&lt;think&gt;'</span> + reasoning_content + <span class="str">'&lt;/think&gt;'</span> }}`},
       { s: S.C, t: "Kimi K2.6 — reasoning 中换行",
         d: `模板 <code>&lt;think&gt;{{rc}}&lt;/think&gt;</code> 不加额外换行。但 rc 来自 <code>message.get('reasoning', message.get('reasoning_content', ''))</code>——如果字段在传递中被 strip，换行丢失。`,
+        e: `生成  &lt;think&gt;\\nStep 1: check.\\n&lt;/think&gt;The answer is 42.\n\nparse reasoning_content = "\\nStep 1: check.\\n"\n      ↑ 取决于中间环节是否 strip\n\n重建  &lt;think&gt;\\nStep 1: check.\\n&lt;/think&gt;The answer is 42.\n      ↑ 若 reasoning_content 未被 strip 则一致`,
         c: `<span class="kw">{%- set</span> rc = message.get(<span class="str">'reasoning'</span>,\n    message.get(<span class="str">'reasoning_content'</span>, <span class="str">''</span>)) <span class="kw">-%}</span>\n&lt;think&gt;{{rc}}&lt;/think&gt;{{render_content(message)}}`},
       { s: S.P, t: "DeepSeek V4 Pro — reasoning 中换行",
         d: `<code>parse_message_from_completion_text</code> 用 <code>_read_until_stop</code> 保留所有原始空白。re-render 用 <code>thinking_template = "{reasoning_content}"</code> 直接拼接。`,
@@ -278,12 +294,15 @@
     [
       { s: S.C, t: "Qwen3.6 — </think> 后换行",
         d: `re-render 固定 <code>&lt;/think&gt;\\n\\n</code> 后接 content（已 trim）。只有模型恰好生成 2 个 <code>\\n</code> 时不漂移。1 个→2 个，3 个→2 个，0 个→2 个。`,
+        e: `生成  &lt;/think&gt;\\nThe answer is 42.\n\nparse content = "The answer is 42."\n               ↑ lstrip('\\n') 去掉前导 \\n\n\n重建  &lt;/think&gt;\\n\\nThe answer is 42.\n               ↑ 固定 \\n\\n，原文只有 \\n`,
         c: `<span class="cm">{# L96: content 提取，去前导换行 #}</span>\n<span class="kw">{%- set</span> content = content\n    .split(<span class="str">'&lt;/think&gt;'</span>)[-1].<span class="fn">lstrip</span>(<span class="str">'\\n'</span>) <span class="kw">%}</span>\n<span class="cm">{# L101: re-render 固定 \\n\\n #}</span>\n{{- <span class="str">'...&lt;think&gt;\\n'</span> + reasoning_content\n    + <span class="str">'\\n&lt;/think&gt;\\n\\n'</span> + content }}`},
       { s: S.F, t: "GLM-5.1 — </think> 后换行",
         d: `<code>content.strip()</code> 吞掉所有首尾空白。<code>&lt;/think&gt;\\n\\ncontent</code> → <code>&lt;/think&gt;content</code>。模型几乎总是在 <code>&lt;/think&gt;</code> 后生成换行——这意味着几乎总是漂移。`,
+        e: `生成  &lt;/think&gt;\\n\\nThe answer is 42.\n\nparse content = "The answer is 42."\n               ↑ strip() 吞掉 \\n\\n\n\n重建  &lt;/think&gt;The answer is 42.\n               ↑ \\n\\n 消失`,
         c: `<span class="kw">{%- if</span> content.<span class="fn">strip</span>() <span class="kw">-%}</span>\n{{ content.<span class="fn">strip</span>() }}\n<span class="kw">{%- endif -%}</span>\n<span class="cm">{# \\n\\n 被 strip() 吞掉 #}</span>`},
       { s: S.C, t: "Kimi K2.6 — </think> 后换行",
         d: `模板 <code>&lt;/think&gt;</code> 后直接接 <code>render_content</code>，无间隔。如果 content 字段保留了前导 <code>\\n</code>，能还原；如果 parser strip 了 content，漂移。`,
+        e: `生成  &lt;/think&gt;\\nThe answer is 42.\n\nparse content = "\\nThe answer is 42."\n      ↑ 若保留前导 \\n\n\n重建  &lt;/think&gt;\\nThe answer is 42.\n      ↑ 若 content 未被 strip 则一致`,
         c: `&lt;think&gt;{{rc}}&lt;/think&gt;{{render_content(message)}}\n<span class="cm">{# 无间隔，取决于 content 字段是否保留前导 \\n #}</span>`},
       { s: S.P, t: "DeepSeek V4 Pro — </think> 后换行",
         d: `parse 时 <code>summary_content</code> 保留 <code>&lt;/think&gt;</code> 后的前导换行。re-render <code>{rc}&lt;/think&gt;{content}</code> 直接拼接，换行在 content 字段中。`,
@@ -295,73 +314,68 @@
     // scenario 3: reasoning 截断
     [
       { s: S.F, t: "Qwen3.6 — reasoning 截断",
-        d: `parser 把 <code>&lt;tool_call&gt;</code> 当隐式 <code>&lt;/think&gt;</code>。但 re-render 强制输出 <code>&lt;think&gt;...\\n&lt;/think&gt;\\n\\n</code>——多出了模型未生成的 <code>&lt;/think&gt;\\n\\n</code>。`,
+        d: `模型因 max_tokens 截断，输出 <code>&lt;think&gt;\\nLet me think\\nste</code>（thinking 中间截断，无 <code>&lt;/think&gt;</code>）。re-render 补上闭合：<code>&lt;think&gt;\\nLet me think\\nste\\n&lt;/think&gt;\\n\\n</code>。多出的 <code>\\n&lt;/think&gt;\\n\\n</code> 是模型未生成的 token。`,
+        e: `生成  &lt;think&gt;\\nLet me analyze this.\\nCheck the wea\n      ↑ max_tokens 截断，无 &lt;/think&gt;\n\nparse reasoning_content = "Let me analyze this.\\nCheck the wea"\n      content = ""\n\n重建  &lt;think&gt;\\nLet me analyze this.\\nCheck the wea\\n&lt;/think&gt;\\n\\n\n                                                ↑ 补上 \\n&lt;/think&gt;\\n\\n`,
         c: `<span class="cm">{# L101: re-render 总是输出完整闭合 #}</span>\n{{- <span class="str">'&lt;|im_start|&gt;'</span> + message.role\n    + <span class="str">'\\n&lt;think&gt;\\n'</span> + reasoning_content\n    + <span class="str">'\\n&lt;/think&gt;\\n\\n'</span> + content }}`},
       { s: S.F, t: "GLM-5.1 — reasoning 截断",
         d: `类似 Qwen——parser 隐式截断后，re-render 补上 <code>&lt;/think&gt;</code>，多出模型未生成的闭合标签。`,
+        e: `生成  &lt;think&gt;\\nLet me analyze this.\\nCheck the wea\n      ↑ 截断，无 &lt;/think&gt;\n\nparse reasoning_content = "\\nLet me analyze this.\\nCheck the wea"\n      content = ""\n\n重建  &lt;think&gt;\\nLet me analyze this.\\nCheck the wea&lt;/think&gt;\n                                                ↑ 补上 &lt;/think&gt;`,
         c: `<span class="cm">{# L76: re-render 总是输出完整闭合 #}</span>\n{{ <span class="str">'&lt;think&gt;'</span> + reasoning_content\n    + <span class="str">'&lt;/think&gt;'</span> }}`},
       { s: S.F, t: "Kimi K2.6 — reasoning 截断",
         d: `<code>&lt;|tool_calls_section_begin|&gt;</code> 作为隐式 <code>&lt;/think&gt;</code>。re-render 强制闭合 <code>&lt;think&gt;&lt;/think&gt;</code>，多出闭合标签。`,
+        e: `生成  &lt;think&gt;Let me analyze this.\\nCheck the wea\n      ↑ 截断，无 &lt;/think&gt;\n\nparse reasoning_content = "Let me analyze this.\\nCheck the wea"\n      content = ""\n\n重建  &lt;think&gt;Let me analyze this.\\nCheck the wea&lt;/think&gt;\n                                                ↑ 补上 &lt;/think&gt;`,
         c: `<span class="cm">{# L89: re-render 总是输出完整闭合 #}</span>\n&lt;think&gt;{{rc}}&lt;/think&gt;{{render_content(message)}}`},
       { s: S.F, t: "DeepSeek V4 Pro — reasoning 截断",
         d: `与其他模型不同——parser 不做容错，直接 assert 失败。行为更安全（不会默默漂移），但调用方需要处理异常。`,
+        e: `生成  &lt;think&gt;Let me analyze this.\\nCheck the wea\n      ↑ 截断，无 &lt;/think&gt;\n\nparse assert stop_token == thinking_end_token\n      → AssertionError: missing &lt;/think&gt;\n      ↑ 直接报错，拒绝处理`,
         c: `<span class="kw">assert</span> stop_token == thinking_end_token, \\\n    <span class="str">"Invalid thinking format: missing &lt;/think&gt;"</span>\n<span class="cm"># 截断时直接报错，不进入 re-render</span>`},
       { s: S.F, t: "GPT-OSS — reasoning 截断",
         d: `analysis channel 的 <code>&lt;|end|&gt;</code> 缺失时，parser 需要容错补上。补上的 token 是模型未生成的。`,
+        e: `生成  &lt;|channel|&gt;analysis&lt;|message|&gt;Let me think about\n      ↑ 截断，无 &lt;|end|&gt;\n\nparse thinking = "Let me think about"\n\n重建  &lt;|channel|&gt;analysis&lt;|message|&gt;Let me think about&lt;|end|&gt;\n                                                      ↑ 补上 &lt;|end|&gt;`,
         c: `<span class="cm">{# L293: analysis channel #}</span>\n{{- <span class="str">"&lt;|start|&gt;assistant&lt;|channel|&gt;analysis</span>\n    <span class="str">&lt;|message|&gt;"</span> + message.thinking\n    + <span class="str">"&lt;|end|&gt;"</span> }}\n<span class="cm">{# 截断时 &lt;|end|&gt; 缺失，需容错补上 #}</span>`},
     ],
-    // scenario 4: content 截断
-    [
-      { s: S.F, t: "Qwen3.6 — content 截断",
-        d: `模板在 assistant 末尾固定追加 <code>&lt;|im_end|&gt;\\n</code>，截断时多出模型未生成的 token。`,
-        c: `{{- <span class="str">'&lt;|im_end|&gt;\\n'</span> }}\n<span class="cm">{# 固定追加 stop token #}</span>`},
-      { s: S.C, t: "GLM-5.1 — content 截断",
-        d: `模板中 assistant 没有显式追加 stop token，下一条消息的 role tag 直接跟在 content 后。<code>strip()</code> 仍然可能改变截断位置附近的空白。`,
-        c: `<span class="cm">{# L80-81: content 输出 #}</span>\n<span class="kw">{%- if</span> content.<span class="fn">strip</span>() <span class="kw">-%}</span>\n{{ content.<span class="fn">strip</span>() }}\n<span class="kw">{%- endif -%}</span>\n<span class="cm">{# 无显式 stop token，strip() 影响尾部 #}</span>`},
-      { s: S.F, t: "Kimi K2.6 — content 截断",
-        d: `模板在每条消息末尾追加 <code>&lt;|im_end|&gt;</code>，截断时多出模型未生成的 token。`,
-        c: `&lt;|im_end|&gt;\n<span class="cm">{# 每条消息末尾固定追加 #}</span>`},
-      { s: S.F, t: "DeepSeek V4 Pro — content 截断",
-        d: `<code>assistant_msg_template</code> 末尾固定追加 <code>eos_token</code>（<code>&lt;｜end▁of▁sentence｜&gt;</code>），截断时多出。`,
-        c: `assistant_msg_template = \\\n    <span class="str">"{reasoning}{content}{tool_calls}"</span>\n    + eos_token\n<span class="cm"># 固定追加 eos</span>`},
-      { s: S.F, t: "GPT-OSS — content 截断",
-        d: `历史中用 <code>&lt;|end|&gt;</code>，训练时最后一条用 <code>&lt;|return|&gt;</code>。截断时多出 token，且存在 stop token 类型变化。`,
-        c: `<span class="cm">{# L311: 训练时最后一条 #}</span>\n{{- <span class="str">"...&lt;|message|&gt;"</span> + message.content\n    + <span class="str">"&lt;|return|&gt;"</span> }}\n<span class="cm">{# L314: 历史中 #}</span>\n{{- <span class="str">"...&lt;|message|&gt;"</span> + message.content\n    + <span class="str">"&lt;|end|&gt;"</span> }}`},
-    ],
-    // scenario 5: tool_call 容错
+    // scenario 4: tool_call 容错
     [
       { s: S.C, t: "Qwen3.6 — tool_call 容错",
         d: `XML 格式每个 <code>&lt;parameter&gt;</code> 是独立块——已完成的参数能还原。但 re-render 补上 <code>&lt;/function&gt;\\n&lt;/tool_call&gt;</code> 闭合标签，多出模型未生成的 token。`,
+        e: `生成  ...&lt;parameter=city&gt;\\nBeijing\\n&lt;/parameter&gt;\\n&lt;parameter=unit&gt;\\ncel\n      ↑ 第二个参数中间截断\n\nparse arguments = {"city": "Beijing"}   ← 已完成的 &lt;parameter&gt; 可独立解析\n\n重建  ...&lt;parameter=city&gt;\\nBeijing\\n&lt;/parameter&gt;\\n&lt;/function&gt;\\n&lt;/tool_call&gt;\n                                                    ↑ 补闭合标签`,
         c: `<span class="cm">{# L119-127: XML 参数格式 #}</span>\n{{- <span class="str">'&lt;parameter='</span> + args_name + <span class="str">'&gt;\\n'</span> }}\n{{- args_value }}\n{{- <span class="str">'\\n&lt;/parameter&gt;\\n'</span> }}\n...\n{{- <span class="str">'&lt;/function&gt;\\n&lt;/tool_call&gt;'</span> }}`},
       { s: S.C, t: "GLM-5.1 — tool_call 容错",
         d: `XML 格式，已完成的 <code>&lt;arg_key&gt;&lt;arg_value&gt;</code> 块可独立解析。同样需补闭合标签。`,
+        e: `生成  ...&lt;arg_key&gt;city&lt;/arg_key&gt;\\n&lt;arg_value&gt;Beijing&lt;/arg_value&gt;\\n&lt;arg_key&gt;unit&lt;/arg_key&gt;\\n&lt;arg_value&gt;cel\n      ↑ 第二个参数中间截断\n\nparse arguments = {"city": "Beijing"}   ← 已完成的 key-value 可解析\n\n重建  ...&lt;arg_value&gt;Beijing&lt;/arg_value&gt;\\n&lt;/tool_call&gt;\n                                        ↑ 补闭合标签`,
         c: `&lt;tool_call&gt;get_weather\n  &lt;arg_key&gt;location&lt;/arg_key&gt;\n  &lt;arg_value&gt;Beijing&lt;/arg_value&gt;\n<span class="cm">{# 独立块可解析 #}</span>`},
       { s: S.F, t: "Kimi K2.6 — tool_call 容错",
         d: `arguments 是 JSON 字符串——截断时需要 <code>partial_json_parser</code> 容错。容错结果（补齐引号/括号）与原始 JSON 不同。`,
+        e: `生成  {"city": "Beijing", "unit": "cel\n      ↑ JSON 中间截断\n\nparse partial_json_parser → {"city": "Beijing", "unit": "cel"}\n                             ↑ 补齐引号和括号\n\n重建  {"city": "Beijing", "unit": "cel"}\n      ↑ 补齐后的 JSON ≠ 原文`,
         c: `&lt;|tool_call_argument_begin|&gt;\n  {<span class="str">"location"</span>: <span class="str">"Bei</span>\n<span class="cm">{# 截断 → partial_json_parser 补齐 #}</span>\n<span class="cm">{# {"location": "Bei"} ≠ 原文 #}</span>`},
       { s: S.F, t: "DeepSeek V4 Pro — tool_call 容错",
         d: `DSML parser 不容错——参数不完整时正则匹配失败，直接 <code>raise ValueError</code>。`,
+        e: `生成  &lt;param name="city" string="true"&gt;Beijing&lt;/param&gt;\\n&lt;param name="unit" string="true"&gt;cel\n      ↑ 第二个参数中间截断\n\nparse regex 匹配 &lt;param&gt;...&lt;/param&gt; 失败（unit 不完整）\n      → ValueError\n      ↑ 不容错，直接报错`,
         c: `param_kv = re.<span class="fn">findall</span>(\n    <span class="str">r'^ name="(.*?)" string=...'</span>,\n    param_content)\n<span class="kw">if</span> <span class="fn">len</span>(param_kv) != 1:\n    <span class="kw">raise</span> <span class="fn">ValueError</span>(...)`},
       { s: S.F, t: "GPT-OSS — tool_call 容错",
         d: `JSON 格式 + vLLM parser 的 <code>json.loads</code> → <code>json.dumps</code> 规范化——即使完整也可能改变格式，截断时更不可控。`,
+        e: `生成  {"city": "Beijing", "unit": "cel\n      ↑ JSON 截断\n\nparse json.loads(...) → JSONDecodeError\n      ↑ 无容错机制`,
         c: `<span class="cm"># vLLM parser 规范化</span>\nargs = json.<span class="fn">loads</span>(raw_args)\nnormalized = json.<span class="fn">dumps</span>(args)\n<span class="cm"># 截断时 json.loads 失败</span>`},
     ],
-    // scenario 6: tool_call args 序列化
+    // scenario 5: tool_call args 序列化
     [
       { s: S.P, t: "Qwen3.6 — args 序列化",
         d: `XML 参数格式，字符串直接输出不经过 JSON。从根本上避免了 <code>json.dumps</code> 空格/转义差异。`,
         c: `<span class="kw">{%- set</span> args_value =\n    args_value | <span class="fn">string</span>\n      <span class="kw">if</span> args_value <span class="kw">is</span> string\n      <span class="kw">else</span> args_value | <span class="fn">tojson</span> | safe\n<span class="kw">%}</span>`},
       { s: S.C, t: "GLM-5.1 — args 序列化",
         d: `字符串直接输出，非字符串用 <code>tojson</code>。风险：数字精度（<code>1.0</code> vs <code>1</code>）和中间环节传入字符串化的布尔值。`,
+        e: `生成  &lt;arg_value&gt;True&lt;/arg_value&gt;\n\nparse ast.literal_eval("True") → True (Python bool)\n\n重建  &lt;arg_value&gt;true&lt;/arg_value&gt;\n               ↑ tojson: Python True → JSON true`,
         c: `{{ v | <span class="fn">tojson</span>(ensure_ascii=<span class="kw">False</span>)\n    <span class="kw">if</span> v <span class="kw">is not</span> string\n    <span class="kw">else</span> v }}`},
       { s: S.C, t: "Kimi K2.6 — args 序列化",
         d: `string 直接输出，dict 用 <code>tojson</code>。若 parser 把 JSON 字符串解析为 dict 再传回，<code>tojson</code> 的空格和 key 顺序可能与模型原文不同。`,
+        e: `生成  {"city":"Beijing","unit":"celsius"}\n\nparse json.loads → dict\n      → tojson 重新序列化\n\n重建  {"city": "Beijing", "unit": "celsius"}\n              ↑ 冒号后加空格`,
         c: `<span class="kw">{%- if</span> tool_call[<span class="str">'function'</span>][<span class="str">'arguments'</span>]\n      <span class="kw">is</span> string <span class="kw">%}</span>\n  {{ tool_call[...][<span class="str">'arguments'</span>] }}\n<span class="kw">{%- else %}</span>\n  {{ tool_call[...][<span class="str">'arguments'</span>] | <span class="fn">tojson</span> }}\n<span class="kw">{%- endif %}</span>`},
       { s: S.P, t: "DeepSeek V4 Pro — args 序列化",
         d: `DSML <code>string="true"</code> 标记字符串参数并原样输出，避免 JSON 转义漂移。<code>encode_arguments_to_dsml</code> 和 <code>decode_dsml_to_arguments</code> 是对称函数。`,
         c: `value = v <span class="kw">if</span> <span class="fn">isinstance</span>(v, str) \\\n    <span class="kw">else</span> <span class="fn">to_json</span>(v)\n<span class="cm"># string="true" → 原样输出</span>\n<span class="cm"># string="false" → JSON 编码</span>`},
       { s: S.F, t: "GPT-OSS — args 序列化",
         d: `<code>arguments|tojson</code>——若 arguments 是 JSON 字符串则双重编码；若是 dict，<code>tojson</code> 格式（冒号后空格）可能与模型原文不同。tool response 也有同样的 <code>content|tojson</code> 问题。`,
+        e: `生成  {"city":"Beijing"}\n\nparse arguments = '{"city":"Beijing"}'   ← string 类型\n\n模板  arguments|tojson\n重建  "{\\"city\\":\\"Beijing\\"}"   ← 字符串被再次 JSON 编码\n      ↑ 双重编码`,
         c: `{{- tool_call.arguments|<span class="fn">tojson</span> }}\n<span class="cm">{# string → 双重编码 #}</span>\n<span class="cm">{# dict → 格式可能不同 #}</span>`},
     ],
   ];
@@ -415,6 +429,7 @@
     detailTitle.textContent = cell.t;
 
     let html = `<p>${cell.d}</p>`;
+    if (cell.e) html += `<pre class="drift-eg"><code>${cell.e}</code></pre>`;
     if (cell.c) html += `<pre><code>${cell.c}</code></pre>`;
     detailBody.innerHTML = html;
 
